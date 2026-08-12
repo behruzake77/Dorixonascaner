@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { scrapeMedicineFromGopharm } from '@/lib/scraper';
+import { findMedicineByBarcodeLocal } from '@/lib/barcode-database';
 
 // GET — Dorilar ro'yxati
 export async function GET(request: NextRequest) {
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST — Yangi dori yaratish (barcode bilan scraping)
+// POST — Yangi dori yaratish (barcode bilan)
 export async function POST(request: NextRequest) {
   try {
     const { barcode } = await request.json();
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Avval bazadan qidirish
+    // 1-QADAM: Avval bazadan qidirish
     const existing = await prisma.medicine.findUnique({
       where: { barcode },
       include: { gtins: true },
@@ -75,7 +76,38 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Scraping qilish
+    // 2-QADAM: Lokal barcode bazasidan qidirish
+    const localEntry = findMedicineByBarcodeLocal(barcode);
+
+    if (localEntry) {
+      const medicine = await prisma.medicine.create({
+        data: {
+          barcode,
+          name: localEntry.name,
+          nameRu: localEntry.nameRu,
+          price: localEntry.price,
+          manufacturer: localEntry.manufacturer,
+          country: localEntry.country,
+          dosageForm: localEntry.dosageForm,
+          activeSubstance: localEntry.activeSubstance,
+          dosage: localEntry.dosage,
+          category: localEntry.category,
+          sourceUrl: localEntry.gopharmSlug
+            ? `https://gopharm.uz/product/${localEntry.gopharmSlug}`
+            : undefined,
+          scrapedAt: new Date(),
+        },
+        include: { gtins: true },
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: medicine,
+        message: "Lokal bazadan topildi",
+      });
+    }
+
+    // 3-QADAM: gopharm.uz dan scraping
     const scraped = await scrapeMedicineFromGopharm(barcode);
 
     if (scraped) {
@@ -100,11 +132,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         data: medicine,
-        message: "Yangi dori yaratildi (gopharm.uz dan olindi)",
+        message: "gopharm.uz dan olindi",
       });
     }
 
-    // Scraping ham topmadi
+    // 4-QADAM: Topilmadi
     return NextResponse.json(
       { success: false, error: "Dori ma'lumoti topilmadi" },
       { status: 404 }

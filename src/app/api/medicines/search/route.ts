@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { findMedicineByNameLocal, findMedicineByBarcodeLocal } from '@/lib/barcode-database';
 
 export async function POST(request: NextRequest) {
   try {
@@ -55,6 +56,7 @@ export async function POST(request: NextRequest) {
       delete where.AND;
     }
 
+    // 1-QADAM: PostgreSQL bazadan qidirish
     const [medicines, total] = await Promise.all([
       prisma.medicine.findMany({
         where,
@@ -70,6 +72,77 @@ export async function POST(request: NextRequest) {
       }),
       prisma.medicine.count({ where }),
     ]);
+
+    // Agar bazada topilmasa — lokal bazadan qidirish
+    if (medicines.length === 0 && query) {
+      // Avval barcode bilan qidirish
+      const barcodeResult = findMedicineByBarcodeLocal(query);
+      if (barcodeResult) {
+        return NextResponse.json({
+          success: true,
+          data: {
+            items: [{
+              id: 'local-' + barcodeResult.barcode,
+              barcode: barcodeResult.barcode,
+              name: barcodeResult.name,
+              nameRu: barcodeResult.nameRu,
+              manufacturer: barcodeResult.manufacturer,
+              country: barcodeResult.country,
+              dosageForm: barcodeResult.dosageForm,
+              activeSubstance: barcodeResult.activeSubstance,
+              dosage: barcodeResult.dosage,
+              price: barcodeResult.price,
+              category: barcodeResult.category,
+              sourceUrl: barcodeResult.gopharmSlug
+                ? `https://gopharm.uz/product/${barcodeResult.gopharmSlug}`
+                : undefined,
+              prescription: false,
+              gtins: [],
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            }],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            totalPages: 1,
+          },
+        });
+      }
+
+      // Nomi bo'yicha lokal bazadan qidirish
+      const localResults = findMedicineByNameLocal(query);
+      if (localResults.length > 0) {
+        return NextResponse.json({
+          success: true,
+          data: {
+            items: localResults.map((entry) => ({
+              id: 'local-' + entry.barcode,
+              barcode: entry.barcode,
+              name: entry.name,
+              nameRu: entry.nameRu,
+              manufacturer: entry.manufacturer,
+              country: entry.country,
+              dosageForm: entry.dosageForm,
+              activeSubstance: entry.activeSubstance,
+              dosage: entry.dosage,
+              price: entry.price,
+              category: entry.category,
+              sourceUrl: entry.gopharmSlug
+                ? `https://gopharm.uz/product/${entry.gopharmSlug}`
+                : undefined,
+              prescription: false,
+              gtins: [],
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            })),
+            total: localResults.length,
+            page: 1,
+            pageSize: 20,
+            totalPages: 1,
+          },
+        });
+      }
+    }
 
     return NextResponse.json({
       success: true,
