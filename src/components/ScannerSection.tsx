@@ -381,12 +381,12 @@ export default function ScannerSection() {
     }
   }, [facingMode, isScanning, stopScanner, startScanner]);
 
-  // ═══ Rasm fayldan skanerlash ═══
+  // ═══ Rasm fayldan skanerlash (galereya yoki kamera) ═══
   const handleImageUpload = useCallback(async () => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    input.capture = 'environment';
+    // capture atributi YO'Q — foydalanuvchi galereyadan yoki kameradan tanlashi mumkin
 
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
@@ -410,7 +410,7 @@ export default function ScannerSection() {
           const result = await scanner.scanFile(file, true);
           await processScanResult(result);
         } catch {
-          setError("Rasm dan kod o'qib bo'lmadi");
+          setError("Rasm dan kod o'qib bo'lmadi. Aniqroq rasm sinab ko'ring.");
           playBeep('error');
         } finally {
           await scanner.clear();

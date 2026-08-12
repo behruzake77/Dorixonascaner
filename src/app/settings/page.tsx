@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Settings,
@@ -30,6 +30,28 @@ import { playBeep } from '@/lib/api';
 export default function SettingsPage() {
   const store = useSettingsStore();
   const [saved, setSaved] = useState(false);
+
+  // ═══ Temani DOM ga qo'llash ═══
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove('light', 'dark');
+
+    if (store.theme === 'auto') {
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      root.classList.add(prefersDark ? 'dark' : 'light');
+    } else {
+      root.classList.add(store.theme);
+    }
+
+    // Background rangni o'zgartirish
+    if (store.theme === 'light') {
+      document.body.style.backgroundColor = '#f8fafc';
+      document.body.style.color = '#0f172a';
+    } else {
+      document.body.style.backgroundColor = '#0f172a';
+      document.body.style.color = '#f8fafc';
+    }
+  }, [store.theme]);
 
   const handleTestSound = () => {
     playBeep('success');
@@ -73,14 +95,18 @@ export default function SettingsPage() {
         <Section title="Dizayn" icon={Palette}>
           {/* Tema */}
           <SettingRow
-            icon={Moon}
+            icon={store.theme === 'light' ? Sun : Moon}
             title="Tema"
-            description="Ilova ko'rinishi"
+            description={
+              store.theme === 'dark' ? "Qorong'u rejim yoqilgan" :
+              store.theme === 'light' ? "Yorug' rejim yoqilgan" :
+              "Avtomatik (telefon sozlamasi)"
+            }
           >
             <div className="flex gap-1.5">
               {[
-                { id: 'dark' as const, icon: Moon, label: 'Qorong\'u' },
-                { id: 'light' as const, icon: Sun, label: 'Yorug\'' },
+                { id: 'dark' as const, icon: Moon, label: "Qorong'u" },
+                { id: 'light' as const, icon: Sun, label: "Yorug'" },
                 { id: 'auto' as const, icon: Smartphone, label: 'Auto' },
               ].map((t) => (
                 <button
@@ -89,7 +115,7 @@ export default function SettingsPage() {
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     store.theme === t.id
                       ? 'bg-primary text-white'
-                      : 'bg-card-hover text-muted'
+                      : 'bg-card-hover text-muted hover:text-foreground'
                   }`}
                 >
                   <t.icon size={12} />
@@ -106,7 +132,7 @@ export default function SettingsPage() {
           <SettingRow
             icon={store.soundEnabled ? Volume2 : VolumeX}
             title="Ovoz (Beep)"
-            description="Skanerlashda ovoz chiqadi"
+            description={store.soundEnabled ? "Yoqilgan — skanerlashda ovoz chiqadi" : "O'chirilgan"}
           >
             <Toggle
               checked={store.soundEnabled}
@@ -137,7 +163,7 @@ export default function SettingsPage() {
           <SettingRow
             icon={Vibrate}
             title="Vibratsiya"
-            description="Skanerlashda telefon titraydi"
+            description={store.vibrationEnabled ? "Yoqilgan — telefon titraydi" : "O'chirilgan"}
           >
             <Toggle
               checked={store.vibrationEnabled}
@@ -161,7 +187,11 @@ export default function SettingsPage() {
           <SettingRow
             icon={Zap}
             title="Skanerlash engine"
-            description="Auto — eng tezini tanlaydi"
+            description={
+              store.scanEngine === 'auto' ? "Auto — eng tezini tanlaydi" :
+              store.scanEngine === 'native' ? "Native — tez, kam batareya" :
+              "html5-qrcode — barcha brauzerlar"
+            }
           >
             <div className="flex gap-1.5">
               {[
@@ -175,7 +205,7 @@ export default function SettingsPage() {
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     store.scanEngine === e.id
                       ? 'bg-primary text-white'
-                      : 'bg-card-hover text-muted'
+                      : 'bg-card-hover text-muted hover:text-foreground'
                   }`}
                 >
                   {e.label}
@@ -188,7 +218,7 @@ export default function SettingsPage() {
           <SettingRow
             icon={Search}
             title="Avtomatik qidirish"
-            description="Skanerlaganda dori ma'lumotini avtomatik topadi"
+            description={store.autoLookup ? "Yoqilgan — skanerlaganda avtomatik dori qidiradi" : "O'chirilgan"}
           >
             <Toggle
               checked={store.autoLookup}
@@ -200,7 +230,7 @@ export default function SettingsPage() {
           <SettingRow
             icon={Clock}
             title="Takroriy scan blokirovka"
-            description={`${(store.scanDelay / 1000).toFixed(1)} soniya`}
+            description={`${(store.scanDelay / 1000).toFixed(1)} soniya kutish`}
           >
             <select
               value={store.scanDelay}
@@ -219,7 +249,7 @@ export default function SettingsPage() {
           <SettingRow
             icon={Flashlight}
             title="Chiroq avtomatik yoqish"
-            description="Kamera yoqilganda chiroq ham yoqiladi"
+            description={store.torchDefault ? "Yoqilgan — kamera bilan birga chiroq ham yoqiladi" : "O'chirilgan"}
           >
             <Toggle
               checked={store.torchDefault}
@@ -248,7 +278,7 @@ export default function SettingsPage() {
           <SettingRow
             icon={DollarSign}
             title="Narxlarni ko'rsatish"
-            description="Dori kartochkalarida narx ko'rinadi"
+            description={store.showPrices ? "Yoqilgan — dori kartochkalarida narx ko'rinadi" : "O'chirilgan"}
           >
             <Toggle
               checked={store.showPrices}

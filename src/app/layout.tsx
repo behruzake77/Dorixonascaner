@@ -31,14 +31,36 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="uz" className="dark">
+    <html lang="uz" className="dark" suppressHydrationWarning>
       <head>
-        <link rel="icon" href="/favicon.ico" />
-        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <link rel="apple-touch-icon" href="/favicon.svg" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        {/* Temani avtomatik yuklash — FOUC oldini olish */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var stored = JSON.parse(localStorage.getItem('dorixona-settings') || '{}');
+                  var theme = (stored.state && stored.state.theme) || 'dark';
+                  var root = document.documentElement;
+                  if (theme === 'auto') {
+                    theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                  }
+                  root.classList.add(theme);
+                  root.classList.remove(theme === 'dark' ? 'light' : 'dark');
+                } catch(e) {
+                  document.documentElement.classList.add('dark');
+                }
+              })();
+            `,
+          }}
+        />
       </head>
-      <body className="min-h-screen bg-[#0f172a] text-white antialiased">
+      <body className="min-h-screen antialiased">
         <div className="flex min-h-screen flex-col">
           {children}
         </div>
