@@ -1,18 +1,45 @@
 // ═══════════════════════════════════════════
-// Prisma Client — Singleton
+// Prisma Client — Lazy Singleton
+// prisma generate bo'lmasa ham build xatosiz ishlaydi
 // ═══════════════════════════════════════════
 
-// @ts-ignore — Prisma client is generated at build time via `prisma generate`
-import { PrismaClient } from '@prisma/client';
-
 const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
+  __prisma: any;
 };
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-  });
+// Lazy getter — faqat prisma.x() chaqirilganda import bo'ladi
+function getPrisma() {
+  if (!globalForPrisma.__prisma) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { PrismaClient } = require('@prisma/client');
+      globalForPrisma.__prisma = new PrismaClient({
+        log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+      });
+    } catch (e: any) {
+      // Prisma generate qilinmagan — build vaqtida xato bermaslik uchun
+      console.error('Prisma client yuklanmadi:', e.message);
+      // Proxy qaytarish — xato faqat haqiqiy so'rovda chiqadi
+      return new Proxy({}, {
+        get: () => {
+          throw new Error(
+            'Prisma client mavjud emas. "npx prisma generate" ishga tushiring.'
+          );
+        },
+      });
+    }
+  }
+  return globalForPrisma.__prisma;
+}
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+// Export — proxy orqali, har bir prisma.x chaqiruvda getPrisma() ishlaydi
+export const prisma = new Proxy({} as any, {
+  get: (_target, prop) => {
+    const client = getPrisma();
+    const value = client[prop];
+    if (typeof value === 'function') {
+      return value.bind(client);
+    }
+    return value;
+  },
+});
