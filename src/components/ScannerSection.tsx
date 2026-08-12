@@ -464,9 +464,10 @@ export default function ScannerSection() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={startScanner}
+              aria-label="Kamerani yoqish va skanerlashni boshlash"
               className="flex-1 h-14 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25 touch-target"
             >
-              <Camera size={22} />
+              <Camera size={22} aria-hidden="true" />
               Kamerani yoqish
             </motion.button>
 
@@ -474,9 +475,10 @@ export default function ScannerSection() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleImageUpload}
+              aria-label="Rasm fayldan barcode o'qish"
               className="h-14 px-5 bg-card hover:bg-card-hover text-foreground rounded-xl font-semibold flex items-center gap-2 touch-target border border-border"
             >
-              <ImagePlus size={20} />
+              <ImagePlus size={20} aria-hidden="true" />
             </motion.button>
           </>
         ) : (
@@ -485,9 +487,10 @@ export default function ScannerSection() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={stopScanner}
+              aria-label="Skanerlashni to'xtatish"
               className="flex-1 h-14 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg shadow-red-500/25 touch-target"
             >
-              <CameraOff size={22} />
+              <CameraOff size={22} aria-hidden="true" />
               To&apos;xtatish
             </motion.button>
 
@@ -496,6 +499,7 @@ export default function ScannerSection() {
               <motion.button
                 whileTap={{ scale: 0.95 }}
                 onClick={handleTorchToggle}
+                aria-label={torchOn ? "Chiroqni o'chirish" : "Chiroqni yoqish"}
                 className={`h-14 px-4 rounded-xl font-semibold flex items-center gap-2 touch-target border transition-colors ${
                   torchOn
                     ? 'bg-accent text-background border-accent'
@@ -510,9 +514,10 @@ export default function ScannerSection() {
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={switchCamera}
+              aria-label="Kamerani almashtirish"
               className="h-14 px-4 bg-card hover:bg-card-hover text-foreground rounded-xl font-semibold flex items-center gap-2 touch-target border border-border"
             >
-              <SwitchCamera size={20} />
+              <SwitchCamera size={20} aria-hidden="true" />
             </motion.button>
           </>
         )}
@@ -522,6 +527,8 @@ export default function ScannerSection() {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={toggleBatchMode}
+          aria-label={batchMode ? "Batch rejimini o'chirish" : "Batch rejimini yoqish"}
+          aria-pressed={batchMode}
           className={`h-14 px-5 rounded-xl font-semibold flex items-center gap-2 touch-target transition-colors ${
             batchMode
               ? 'bg-accent text-background'
