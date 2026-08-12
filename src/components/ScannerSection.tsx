@@ -19,6 +19,7 @@ import {
   Tag,
   X,
   Edit3,
+  ImagePlus,
 } from 'lucide-react';
 import { useScannerStore } from '@/store/scanner-store';
 import { parseGS1DataMatrix, detectBarcodeFormat } from '@/lib/gs1-parser';
@@ -334,6 +335,45 @@ export default function ScannerSection() {
     setError(null);
   };
 
+  // ═══ GALEREYADAN SKANERLASH ═══
+  const handleImageUpload = useCallback(async () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      try {
+        if (isNativeBarcodeSupported()) {
+          const { detectBarcodeFromImage } = await import('@/lib/native-scanner');
+          const result = await detectBarcodeFromImage(file);
+          if (result) {
+            await processScanResult(result.rawValue);
+            return;
+          }
+        }
+
+        const { Html5Qrcode } = await import('html5-qrcode');
+        const scanner = new Html5Qrcode('qr-reader-temp');
+        try {
+          const result = await scanner.scanFile(file, true);
+          await processScanResult(result);
+        } catch {
+          setError("Rasm dan kod o'qib bo'lmadi. Aniqroq rasm sinab ko'ring.");
+          playBeep('error');
+        } finally {
+          await scanner.clear();
+        }
+      } catch (err) {
+        setError("Rasm qayta ishlashda xatolik");
+      }
+    };
+
+    input.click();
+  }, [processScanResult]);
+
   return (
     <div className="space-y-4">
       {/* ═══ QADAM KO'RSATKICHI ═══ */}
@@ -532,6 +572,15 @@ export default function ScannerSection() {
                step === 'scan-gtin' ? 'GTIN skanerlash' :
                'Kamerani yoqish'}
             </motion.button>
+
+            <motion.button
+              whileTap={{ scale: 0.98 }}
+              onClick={handleImageUpload}
+              aria-label="Galereyadan rasm tanlash"
+              className="h-12 px-4 bg-card hover:bg-card-hover text-foreground rounded-xl font-semibold flex items-center gap-2 border border-border"
+            >
+              <ImagePlus size={18} />
+            </motion.button>
           </>
         ) : (
           <>
@@ -570,6 +619,7 @@ export default function ScannerSection() {
       {/* ═══ SKANER OYNASI ═══ */}
       <div className="relative rounded-2xl overflow-hidden bg-card min-h-[300px]">
         <div id="qr-reader" className={`w-full min-h-[300px] ${isScanning ? 'block' : 'hidden'}`} />
+        <div id="qr-reader-temp" className="hidden" />
 
         {!isScanning && step !== 'manual-entry' && (
           <div className="flex flex-col items-center justify-center h-[300px] text-muted">
