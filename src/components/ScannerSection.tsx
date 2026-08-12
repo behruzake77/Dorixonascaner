@@ -457,9 +457,24 @@ export default function ScannerSection() {
       )}
 
       {/* ═══ Asosiy tugmalar ═══ */}
-      <div className="flex gap-3">
+      <div className="flex gap-2">
         {!isScanning ? (
           <>
+            {/* Kamera tanlash (orqa/old) */}
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setFacingMode(facingMode === 'environment' ? 'user' : 'environment')}
+              aria-label={facingMode === 'environment' ? "Old kameraga o'tish" : "Orqa kameraga o'tish"}
+              className={`h-14 px-4 rounded-xl font-semibold flex items-center gap-2 touch-target border transition-colors ${
+                facingMode === 'user'
+                  ? 'bg-primary/20 text-primary border-primary/50'
+                  : 'bg-card hover:bg-card-hover text-foreground border-border'
+              }`}
+            >
+              <SwitchCamera size={20} aria-hidden="true" />
+              <span className="text-xs">{facingMode === 'environment' ? 'Orqa' : 'Old'}</span>
+            </motion.button>
+
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
@@ -468,15 +483,15 @@ export default function ScannerSection() {
               className="flex-1 h-14 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25 touch-target"
             >
               <Camera size={22} aria-hidden="true" />
-              Kamerani yoqish
+              Skanerlash
             </motion.button>
 
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleImageUpload}
-              aria-label="Rasm fayldan barcode o'qish"
-              className="h-14 px-5 bg-card hover:bg-card-hover text-foreground rounded-xl font-semibold flex items-center gap-2 touch-target border border-border"
+              aria-label="Galereyadan rasm tanlash"
+              className="h-14 px-4 bg-card hover:bg-card-hover text-foreground rounded-xl font-semibold flex items-center gap-2 touch-target border border-border"
             >
               <ImagePlus size={20} aria-hidden="true" />
             </motion.button>
@@ -510,12 +525,16 @@ export default function ScannerSection() {
               </motion.button>
             )}
 
-            {/* Kamera almashtirish */}
+            {/* Kamera almashtirish (skanerlash paytida) */}
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={switchCamera}
               aria-label="Kamerani almashtirish"
-              className="h-14 px-4 bg-card hover:bg-card-hover text-foreground rounded-xl font-semibold flex items-center gap-2 touch-target border border-border"
+              className={`h-14 px-4 rounded-xl font-semibold flex items-center gap-2 touch-target border transition-colors ${
+                facingMode === 'user'
+                  ? 'bg-primary/20 text-primary border-primary/50'
+                  : 'bg-card hover:bg-card-hover text-foreground border-border'
+              }`}
             >
               <SwitchCamera size={20} aria-hidden="true" />
             </motion.button>
