@@ -7,25 +7,22 @@ import {
   CameraOff,
   ScanBarcode,
   CheckCircle2,
-  XCircle,
   AlertCircle,
   Loader2,
   SwitchCamera,
   Flashlight,
   FlashlightOff,
-  ImagePlus,
   Plus,
   Save,
   ArrowRight,
   Package,
   Tag,
   X,
-  Printer,
-  Link2,
+  Edit3,
 } from 'lucide-react';
 import { useScannerStore } from '@/store/scanner-store';
-import { parseGS1DataMatrix, detectBarcodeFormat, formatScanResult } from '@/lib/gs1-parser';
-import { findMedicineByBarcode, playBeep, vibrateDevice, saveUnknownGtin, createMedicine, addGtin } from '@/lib/api';
+import { parseGS1DataMatrix, detectBarcodeFormat } from '@/lib/gs1-parser';
+import { playBeep, vibrateDevice } from '@/lib/api';
 import {
   isNativeBarcodeSupported,
   createCameraStream,
@@ -35,15 +32,14 @@ import {
 } from '@/lib/native-scanner';
 import type { ScanResult, Medicine, MedicineGtin } from '@/types';
 
-// ═══ ISH TARTIBI ═══
-type Step = 
-  | 'scan-barcode'    // 1-QADAM: EAN-13 skanerlash → dori topish
-  | 'medicine-found'  // Dori topildi, GTIN skanerlashga tayyor
-  | 'scan-gtin'       // 2-QADAM: DataMatrix/GTIN skanerlash
-  | 'gtin-saved';     // GTIN saqlandi
+type Step =
+  | 'scan-barcode'
+  | 'medicine-found'
+  | 'manual-entry'
+  | 'scan-gtin'
+  | 'gtin-saved';
 
 export default function ScannerSection() {
-  // ═══ State ═══
   const [step, setStep] = useState<Step>('scan-barcode');
   const [isScanning, setIsScanning] = useState(false);
   const [currentMedicine, setCurrentMedicine] = useState<Medicine | null>(null);
@@ -53,54 +49,54 @@ export default function ScannerSection() {
   const [torchSupported, setTorchSupported] = useState(false);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
   const [scanPaused, setScanPaused] = useState(false);
-  const [lastScannedCode, setLastScannedCode] = useState<string>('');
+  const [lastScannedCode, setLastScannedCode] = useState('');
   const [savedGtins, setSavedGtins] = useState<MedicineGtin[]>([]);
-  const [showManualInput, setShowManualInput] = useState(false);
   const [manualBarcode, setManualBarcode] = useState('');
 
-  // ═══ Refs ═══
+  // Qo'lda kiritish formasi
+  const [manualForm, setManualForm] = useState({
+    name: '',
+    manufacturer: '',
+    price: '',
+    dosageForm: '',
+    activeSubstance: '',
+    dosage: '',
+  });
+
   const scannerRef = useRef<any>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animFrameRef = useRef<number>(0);
   const lastScanTimeRef = useRef<number>(0);
-  const fpsCounterRef = useRef({ count: 0, lastTime: Date.now() });
+  const lastScannedBarcode = useRef<string>('');
 
   const { addScan } = useScannerStore();
 
-  // ═══ Cleanup ═══
   useEffect(() => {
-    return () => {
-      stopScanner();
-    };
+    return () => { stopScanner(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ═══ 1-QADAM: EAN-13 bo'yicha dori qidirish ═══
+  // ═══ DORI QIDIRISH ═══
   const lookupMedicine = useCallback(async (barcode: string) => {
     setLoading(true);
     setError(null);
 
     try {
-      const result = await findMedicineByBarcode(barcode);
+      const res = await fetch(`/api/medicines/barcode/${barcode}`);
+      const data = await res.json();
 
-      if (result.success && result.data) {
-        setCurrentMedicine(result.data);
+      if (data.success && data.data) {
+        // TOPILDI!
+        setCurrentMedicine(data.data);
+        setSavedGtins(data.data.gtins || []);
         setStep('medicine-found');
-        setSavedGtins(result.data.gtins || []);
         playBeep('success');
         vibrateDevice([100, 50, 100]);
       } else {
-        // Bazada yo'q — yaratish
-        const createResult = await createMedicine(barcode);
-        if (createResult.success && createResult.data) {
-          setCurrentMedicine(createResult.data);
-          setStep('medicine-found');
-          playBeep('success');
-        } else {
-          setError("Bu barcode bo'yicha dori topilmadi. Qo'lda kiriting.");
-          playBeep('warning');
-        }
+        // TOPILMADI — qo'lda kiritish formasi
+        setStep('manual-entry');
+        playBeep('warning');
       }
     } catch (err) {
       setError("Qidirishda xatolik");
@@ -110,7 +106,47 @@ export default function ScannerSection() {
     }
   }, []);
 
-  // ═══ 2-QADAM: GTIN saqlash ═══
+  // ═══ QO'LDA KIRITISH — Bazaga saqlash ═══
+  const saveManualEntry = useCallback(async () => {
+    if (!manualForm.name.trim()) {
+      setError("Dori nomini kiriting!");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/medicines/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          barcode: lastScannedBarcode.current,
+          ...manualForm,
+          price: manualForm.price ? parseFloat(manualForm.price) : null,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.success && data.data) {
+        setCurrentMedicine(data.data);
+        setSavedGtins([]);
+        setStep('medicine-found');
+        setManualForm({ name: '', manufacturer: '', price: '', dosageForm: '', activeSubstance: '', dosage: '' });
+        playBeep('success');
+        vibrateDevice([100, 50, 100]);
+      } else {
+        setError(data.error || "Saqlashda xatolik");
+        playBeep('error');
+      }
+    } catch (err) {
+      setError("Server xatoligi");
+      playBeep('error');
+    } finally {
+      setLoading(false);
+    }
+  }, [manualForm]);
+
+  // ═══ GTIN SAQLASH ═══
   const saveGtin = useCallback(async (rawValue: string) => {
     if (!currentMedicine) return;
 
@@ -118,25 +154,31 @@ export default function ScannerSection() {
     try {
       const parsed = parseGS1DataMatrix(rawValue);
 
-      const result = await addGtin(currentMedicine.id, {
-        gtin: parsed.gtin || rawValue,
-        serial: parsed.serial,
-        expiry: parsed.expiry,
-        batch: parsed.batch,
+      const res = await fetch(`/api/medicines/${currentMedicine.id}/gtins`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gtin: parsed.gtin || rawValue,
+          serial: parsed.serial,
+          expiry: parsed.expiry,
+          batch: parsed.batch,
+        }),
       });
 
-      if (result.success && result.data) {
-        setSavedGtins((prev) => [result.data!, ...prev]);
+      const data = await res.json();
+
+      if (data.success && data.data) {
+        setSavedGtins((prev) => [data.data, ...prev]);
         setStep('gtin-saved');
         playBeep('success');
         vibrateDevice([100, 50, 100]);
 
-        // 2 soniyadan keyin yana GTIN skanerlashga qaytish
         setTimeout(() => {
           setStep('scan-gtin');
-        }, 2000);
+          setLastScannedCode('');
+        }, 1500);
       } else {
-        setError(result.error || "GTIN saqlashda xatolik");
+        setError(data.error || "GTIN saqlashda xatolik");
         playBeep('error');
       }
     } catch (err) {
@@ -147,23 +189,22 @@ export default function ScannerSection() {
     }
   }, [currentMedicine]);
 
-  // ═══ Scan natijasini qayta ishlash ═══
+  // ═══ SCAN NATIJASI ═══
   const processScanResult = useCallback(
     async (rawValue: string) => {
-      // Takroriy skanerlashni oldini olish
       const now = Date.now();
       if (lastScanTimeRef.current && now - lastScanTimeRef.current < 2000) return;
       if (lastScannedCode === rawValue) return;
 
       lastScanTimeRef.current = now;
       setLastScannedCode(rawValue);
+      lastScannedBarcode.current = rawValue;
 
       const format = detectBarcodeFormat(rawValue);
 
-      // Scan logga qo'shish
       addScan({
         type: format,
-        format: format,
+        format,
         rawValue,
         parsed: format === 'DATAMATRIX' ? parseGS1DataMatrix(rawValue) : undefined,
         timestamp: new Date(),
@@ -172,13 +213,13 @@ export default function ScannerSection() {
       setScanPaused(true);
       setTimeout(() => setScanPaused(false), 2000);
 
-      // ═══ 1-QADAM: EAN-13 bo'lsa → dori qidirish ═══
-      if (step === 'scan-barcode' && (format === 'EAN13' || format === 'UNKNOWN')) {
+      // 1-QADAM: EAN-13 → dori qidirish
+      if (step === 'scan-barcode' && format === 'EAN13') {
         await lookupMedicine(rawValue);
         return;
       }
 
-      // ═══ 2-QADAM: DataMatrix bo'lsa → GTIN saqlash ═══
+      // 2-QADAM: DataMatrix → GTIN saqlash
       if (step === 'scan-gtin' && format === 'DATAMATRIX') {
         await saveGtin(rawValue);
         return;
@@ -186,17 +227,15 @@ export default function ScannerSection() {
 
       // Noto'g'ri format
       if (step === 'scan-barcode' && format === 'DATAMATRIX') {
-        setError("Avval dori shtrix kodini (EAN-13) skanerlang");
-        playBeep('warning');
+        setError("Avval dori shtrix kodini (EAN-13) skanerlang, keyin GTIN ni");
       } else if (step === 'scan-gtin' && format === 'EAN13') {
-        setError("Hozir GTIN (DataMatrix) skanerlash kerak");
-        playBeep('warning');
+        setError("Hozir GTIN (DataMatrix) kerak. EAN-13 emas!");
       }
     },
     [step, lookupMedicine, saveGtin, addScan, lastScannedCode]
   );
 
-  // ═══ Kamera ═══
+  // ═══ KAMERA ═══
   const startScanner = useCallback(async () => {
     try {
       setError(null);
@@ -236,14 +275,10 @@ export default function ScannerSection() {
               animFrameRef.current = requestAnimationFrame(scanLoop);
               return;
             }
-
             if (!scanPaused) {
               const result = await detectBarcodeFromVideo(videoRef.current);
-              if (result) {
-                await processScanResult(result.rawValue);
-              }
+              if (result) await processScanResult(result.rawValue);
             }
-
             animFrameRef.current = requestAnimationFrame(scanLoop);
           };
 
@@ -252,23 +287,19 @@ export default function ScannerSection() {
         }
       }
 
-      // Fallback: html5-qrcode
+      // Fallback
       const { Html5Qrcode } = await import('html5-qrcode');
       if (scannerRef.current) await scannerRef.current.stop();
-
       const scanner = new Html5Qrcode('qr-reader');
       scannerRef.current = scanner;
-
       await scanner.start(
         { facingMode },
         { fps: 15, qrbox: { width: 250, height: 250 } },
         (text: string) => processScanResult(text),
         () => {}
       );
-
       setIsScanning(true);
-    } catch (err: any) {
-      console.error('Scanner error:', err);
+    } catch (err) {
       setError("Kamera ochilmadi. Ruxsat bering.");
     }
   }, [facingMode, scanPaused, processScanResult]);
@@ -291,52 +322,40 @@ export default function ScannerSection() {
   const switchCamera = useCallback(async () => {
     const newMode = facingMode === 'environment' ? 'user' : 'environment';
     setFacingMode(newMode);
-    if (isScanning) {
-      await stopScanner();
-      setTimeout(() => startScanner(), 300);
-    }
+    if (isScanning) { await stopScanner(); setTimeout(() => startScanner(), 300); }
   }, [facingMode, isScanning, stopScanner, startScanner]);
 
-  // ═══ Qo'lda barcode kiritish ═══
-  const handleManualInput = async () => {
-    if (!manualBarcode.trim()) return;
-    await lookupMedicine(manualBarcode.trim());
-    setShowManualInput(false);
-    setManualBarcode('');
-  };
-
-  // ═══ Yangi dori uchun ═══
   const handleNewMedicine = () => {
     setCurrentMedicine(null);
     setSavedGtins([]);
     setStep('scan-barcode');
     setLastScannedCode('');
+    lastScannedBarcode.current = '';
     setError(null);
   };
 
-  // ═══ Render ═══
   return (
     <div className="space-y-4">
       {/* ═══ QADAM KO'RSATKICHI ═══ */}
       <div className="flex items-center gap-2 text-xs">
         <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${
-          step === 'scan-barcode' ? 'bg-primary text-white' : 'bg-primary/20 text-primary'
+          step === 'scan-barcode' || step === 'manual-entry' ? 'bg-primary text-white' : 'bg-primary/20 text-primary'
         }`}>
           <ScanBarcode size={12} />
           <span>1. Shtrix kod</span>
         </div>
         <ArrowRight size={14} className="text-muted" />
         <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${
-          step === 'scan-gtin' || step === 'gtin-saved' ? 'bg-success text-white' : 'bg-card text-muted'
+          step === 'scan-gtin' || step === 'gtin-saved' || step === 'medicine-found' ? 'bg-success text-white' : 'bg-card text-muted'
         }`}>
           <Tag size={12} />
           <span>2. GTIN saqlash</span>
         </div>
       </div>
 
-      {/* ═══ DORI TOPILGANDA ═══ */}
+      {/* ═══ DORI TOPILDI ═══ */}
       <AnimatePresence>
-        {currentMedicine && (
+        {currentMedicine && step !== 'manual-entry' && (
           <motion.div
             initial={{ y: -10, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -351,36 +370,140 @@ export default function ScannerSection() {
                 <div>
                   <h3 className="font-semibold text-sm">{currentMedicine.name}</h3>
                   <p className="text-xs text-muted">
-                    {currentMedicine.manufacturer || "Ishlab chiqaruvchi noma'lum"}
+                    {currentMedicine.manufacturer || "—"} | {currentMedicine.barcode}
                   </p>
+                  {currentMedicine.price && (
+                    <p className="text-xs text-success font-medium">
+                      {new Intl.NumberFormat('uz-UZ').format(currentMedicine.price)} so&apos;m
+                    </p>
+                  )}
                 </div>
               </div>
-              <button
-                onClick={handleNewMedicine}
-                className="p-2 rounded-lg hover:bg-card transition-colors"
-                title="Yangi dori"
-              >
+              <button onClick={handleNewMedicine} className="p-2 rounded-lg hover:bg-card">
                 <X size={16} className="text-muted" />
               </button>
             </div>
 
-            {/* Saqlangan GTIN lar */}
             {savedGtins.length > 0 && (
               <div className="mt-3 pt-3 border-t border-success/20">
-                <p className="text-xs text-muted mb-2">
-                  Saqlangan GTIN lar: {savedGtins.length}
-                </p>
+                <p className="text-xs text-muted mb-2">Saqlangan GTIN lar: {savedGtins.length}</p>
                 <div className="space-y-1 max-h-32 overflow-y-auto">
                   {savedGtins.map((g) => (
                     <div key={g.id} className="flex items-center justify-between text-xs bg-background/50 rounded-lg px-3 py-1.5">
                       <span className="font-mono">{g.gtin}</span>
                       {g.serial && <span className="text-muted">SN: {g.serial}</span>}
-                      <span className="text-success text-[10px]">✓</span>
+                      <CheckCircle2 size={12} className="text-success" />
                     </div>
                   ))}
                 </div>
               </div>
             )}
+
+            {step === 'medicine-found' && (
+              <button
+                onClick={() => { setStep('scan-gtin'); startScanner(); }}
+                className="mt-3 w-full h-10 bg-success text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+              >
+                <Tag size={16} />
+                GTIN skanerlashni boshlash
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ QO'LDA KIRITISH FORMASI ═══ */}
+      <AnimatePresence>
+        {step === 'manual-entry' && (
+          <motion.div
+            initial={{ y: 10, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -10, opacity: 0 }}
+            className="bg-card rounded-xl border border-border p-4 space-y-3"
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <Edit3 size={16} className="text-primary" />
+              <h3 className="font-semibold text-sm">Dori ma&apos;lumotlarini kiriting</h3>
+            </div>
+
+            <div className="bg-background rounded-lg px-3 py-2 text-xs font-mono text-muted">
+              Barcode: {lastScannedBarcode.current}
+            </div>
+
+            <div>
+              <label className="text-xs text-muted mb-1 block">Dori nomi *</label>
+              <input
+                type="text"
+                value={manualForm.name}
+                onChange={(e) => setManualForm({ ...manualForm, name: e.target.value })}
+                placeholder="Masalan: Paratsetamol"
+                className="w-full h-10 bg-background border border-border rounded-lg px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                autoFocus
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted mb-1 block">Ishlab chiqaruvchi</label>
+                <input
+                  type="text"
+                  value={manualForm.manufacturer}
+                  onChange={(e) => setManualForm({ ...manualForm, manufacturer: e.target.value })}
+                  placeholder="Pharmstandard"
+                  className="w-full h-10 bg-background border border-border rounded-lg px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted mb-1 block">Narxi (so&apos;m)</label>
+                <input
+                  type="number"
+                  value={manualForm.price}
+                  onChange={(e) => setManualForm({ ...manualForm, price: e.target.value })}
+                  placeholder="5500"
+                  className="w-full h-10 bg-background border border-border rounded-lg px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted mb-1 block">Shakli</label>
+                <input
+                  type="text"
+                  value={manualForm.dosageForm}
+                  onChange={(e) => setManualForm({ ...manualForm, dosageForm: e.target.value })}
+                  placeholder="Tabletkasi"
+                  className="w-full h-10 bg-background border border-border rounded-lg px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted mb-1 block">Dozasi</label>
+                <input
+                  type="text"
+                  value={manualForm.dosage}
+                  onChange={(e) => setManualForm({ ...manualForm, dosage: e.target.value })}
+                  placeholder="500mg"
+                  className="w-full h-10 bg-background border border-border rounded-lg px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={saveManualEntry}
+                disabled={!manualForm.name.trim() || loading}
+                className="flex-1 h-10 bg-success text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Saqlash
+              </button>
+              <button
+                onClick={() => { setStep('scan-barcode'); setError(null); }}
+                className="h-10 px-4 bg-card-hover text-muted rounded-lg text-sm"
+              >
+                Bekor
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -392,12 +515,11 @@ export default function ScannerSection() {
             <motion.button
               whileTap={{ scale: 0.98 }}
               onClick={() => setFacingMode(facingMode === 'environment' ? 'user' : 'environment')}
-              className={`h-12 px-3 rounded-xl font-medium flex items-center gap-1.5 border transition-colors text-sm ${
+              className={`h-12 px-3 rounded-xl border text-sm ${
                 facingMode === 'user' ? 'bg-primary/20 text-primary border-primary/50' : 'bg-card text-muted border-border'
               }`}
             >
               <SwitchCamera size={16} />
-              <span className="hidden sm:inline">{facingMode === 'environment' ? 'Orqa' : 'Old'}</span>
             </motion.button>
 
             <motion.button
@@ -406,15 +528,9 @@ export default function ScannerSection() {
               className="flex-1 h-12 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg"
             >
               <Camera size={20} />
-              {step === 'scan-barcode' ? 'Shtrix kod skanerlash' : 'GTIN skanerlash'}
-            </motion.button>
-
-            <motion.button
-              whileTap={{ scale: 0.98 }}
-              onClick={() => setShowManualInput(true)}
-              className="h-12 px-3 bg-card hover:bg-card-hover rounded-xl font-medium flex items-center gap-1.5 border border-border text-sm"
-            >
-              <Plus size={16} />
+              {step === 'scan-barcode' ? 'Shtrix kod skanerlash' :
+               step === 'scan-gtin' ? 'GTIN skanerlash' :
+               'Kamerani yoqish'}
             </motion.button>
           </>
         ) : (
@@ -432,8 +548,8 @@ export default function ScannerSection() {
               <motion.button
                 whileTap={{ scale: 0.95 }}
                 onClick={handleTorchToggle}
-                className={`h-12 px-3 rounded-xl border transition-colors ${
-                  torchOn ? 'bg-accent text-background border-accent' : 'bg-card text-foreground border-border'
+                className={`h-12 px-3 rounded-xl border ${
+                  torchOn ? 'bg-accent text-background' : 'bg-card text-foreground border-border'
                 }`}
               >
                 {torchOn ? <FlashlightOff size={18} /> : <Flashlight size={18} />}
@@ -453,53 +569,41 @@ export default function ScannerSection() {
 
       {/* ═══ SKANER OYNASI ═══ */}
       <div className="relative rounded-2xl overflow-hidden bg-card min-h-[300px]">
-        <div
-          id="qr-reader"
-          className={`w-full min-h-[300px] ${isScanning ? 'block' : 'hidden'}`}
-        />
+        <div id="qr-reader" className={`w-full min-h-[300px] ${isScanning ? 'block' : 'hidden'}`} />
 
-        {!isScanning && (
+        {!isScanning && step !== 'manual-entry' && (
           <div className="flex flex-col items-center justify-center h-[300px] text-muted">
             <ScanBarcode size={64} className="mb-3 opacity-20" />
             <p className="text-sm font-medium">
-              {step === 'scan-barcode'
-                ? "Dori shtrix kodini (EAN-13) skanerlang"
-                : "GTIN (DataMatrix) kodini skanerlang"}
+              {step === 'scan-barcode' ? "Dori shtrix kodini skanerlang" :
+               step === 'scan-gtin' ? "GTIN (DataMatrix) kodini skanerlang" :
+               "Kamerani yoqing"}
             </p>
             <p className="text-xs mt-1 opacity-60">
-              {step === 'scan-barcode'
-                ? "Masalan: 4607015470868"
-                : "Har bir dori paketidagi DataMatrix kod"}
+              {step === 'scan-barcode' ? "EAN-13 kod — dori qutisida" :
+               step === 'scan-gtin' ? "Har bir paketdagi DataMatrix kod" :
+               ""}
             </p>
           </div>
         )}
 
-        {/* Lazer animatsiya */}
+        {/* Lazer */}
         {isScanning && (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute top-3 left-3 w-8 h-8 border-t-2 border-l-2 border-blue-500 rounded-tl-lg" />
             <div className="absolute top-3 right-3 w-8 h-8 border-t-2 border-r-2 border-blue-500 rounded-tr-lg" />
             <div className="absolute bottom-3 left-3 w-8 h-8 border-b-2 border-l-2 border-blue-500 rounded-bl-lg" />
             <div className="absolute bottom-3 right-3 w-8 h-8 border-b-2 border-r-2 border-blue-500 rounded-br-lg" />
-
             <div className="absolute left-6 right-6 h-[2px] top-0">
               <motion.div
                 className="w-full h-full"
-                style={{
-                  background: 'linear-gradient(90deg, transparent 0%, rgba(59,130,246,0) 10%, rgba(59,130,246,0.8) 50%, rgba(59,130,246,0) 90%, transparent 100%)',
-                  boxShadow: '0 0 15px rgba(59,130,246,0.5)',
-                }}
+                style={{ background: 'linear-gradient(90deg, transparent, rgba(59,130,246,0.8), transparent)', boxShadow: '0 0 15px rgba(59,130,246,0.5)' }}
                 animate={{ top: ['5%', '95%', '5%'] }}
                 transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
               />
             </div>
-
             {scanPaused && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="absolute inset-0 bg-success/5 flex items-center justify-center"
-              >
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 bg-success/5 flex items-center justify-center">
                 <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="bg-success/20 rounded-full p-3">
                   <CheckCircle2 size={32} className="text-success" />
                 </motion.div>
@@ -512,66 +616,22 @@ export default function ScannerSection() {
       {/* ═══ XATOLIK ═══ */}
       <AnimatePresence>
         {error && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
             className="bg-danger/10 border border-danger/30 rounded-xl p-3 flex items-center gap-2"
           >
             <AlertCircle size={16} className="text-danger flex-shrink-0" />
             <p className="text-sm text-danger">{error}</p>
-            <button onClick={() => setError(null)} className="ml-auto">
-              <X size={14} className="text-danger" />
-            </button>
+            <button onClick={() => setError(null)} className="ml-auto"><X size={14} className="text-danger" /></button>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ═══ LOADING ═══ */}
       {loading && (
         <div className="flex items-center justify-center gap-2 py-3">
           <Loader2 size={18} className="animate-spin text-primary" />
           <span className="text-sm text-muted">Qidirilmoqda...</span>
         </div>
       )}
-
-      {/* ═══ QO'LDA KIRITISH ═══ */}
-      <AnimatePresence>
-        {showManualInput && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="bg-card rounded-xl border border-border p-4 space-y-3"
-          >
-            <p className="text-sm font-medium">Barcode raqamini kiriting</p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={manualBarcode}
-                onChange={(e) => setManualBarcode(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleManualInput()}
-                placeholder="Masalan: 4607015470868"
-                className="flex-1 h-10 bg-background border border-border rounded-lg px-3 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary"
-                autoFocus
-              />
-              <button
-                onClick={handleManualInput}
-                disabled={!manualBarcode.trim()}
-                className="h-10 px-4 bg-primary text-white rounded-lg text-sm font-medium disabled:opacity-50"
-              >
-                Qidirish
-              </button>
-            </div>
-            <button
-              onClick={() => { setShowManualInput(false); setManualBarcode(''); }}
-              className="text-xs text-muted"
-            >
-              Bekor qilish
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
