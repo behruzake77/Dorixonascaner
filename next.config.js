@@ -1,8 +1,9 @@
 /** @type {import('next').NextConfig} */
+const path = require('path');
+
 const nextConfig = {
   reactStrictMode: true,
   typescript: {
-    // Prisma generate kerak — Render da avtomatik ishlaydi
     ignoreBuildErrors: true,
   },
   eslint: {
@@ -19,6 +20,11 @@ const nextConfig = {
         hostname: '**.gopharm.uz',
       },
     ],
+  },
+  // ═══ Webpack alias — @/ path Linux/Render da to'g'ri ishlashi uchun ═══
+  webpack: (config) => {
+    config.resolve.alias['@'] = path.join(__dirname, 'src');
+    return config;
   },
   headers: async () => [
     {
