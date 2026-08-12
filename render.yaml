@@ -23,10 +23,7 @@ services:
       - key: NEXTAUTH_SECRET
         generateValue: true
       - key: NEXTAUTH_URL
-        fromService:
-          name: dorixona-scanner
-          type: web
-          property: url
+        sync: false
       # ═══ KIRISH PAROLI ═══
       # Buni o'zgartiring! Xavfsiz parol yozing.
       - key: APP_PASSWORD
