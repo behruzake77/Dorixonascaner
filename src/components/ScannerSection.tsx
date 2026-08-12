@@ -6,64 +6,67 @@ import {
   Camera,
   CameraOff,
   ScanBarcode,
-  Zap,
   CheckCircle2,
   XCircle,
   AlertCircle,
   Loader2,
-  Layers,
+  SwitchCamera,
   Flashlight,
   FlashlightOff,
-  SwitchCamera,
-  ZoomIn,
-  ZoomOut,
   ImagePlus,
-  Crosshair,
-  Gauge,
+  Plus,
+  Save,
+  ArrowRight,
+  Package,
+  Tag,
+  X,
+  Printer,
+  Link2,
 } from 'lucide-react';
 import { useScannerStore } from '@/store/scanner-store';
 import { parseGS1DataMatrix, detectBarcodeFormat, formatScanResult } from '@/lib/gs1-parser';
-import { findMedicineByBarcode, playBeep, vibrateDevice, saveUnknownGtin, createMedicine } from '@/lib/api';
+import { findMedicineByBarcode, playBeep, vibrateDevice, saveUnknownGtin, createMedicine, addGtin } from '@/lib/api';
 import {
   isNativeBarcodeSupported,
   createCameraStream,
   detectBarcodeFromVideo,
   toggleTorch,
-  setZoom,
-  getZoomCapabilities,
   isTorchSupported,
 } from '@/lib/native-scanner';
-import type { ScanResult, Medicine } from '@/types';
-import MedicineCard from './MedicineCard';
+import type { ScanResult, Medicine, MedicineGtin } from '@/types';
 
-// Scan engine turi
-type ScanEngine = 'native' | 'html5qrcode';
+// ═══ ISH TARTIBI ═══
+type Step = 
+  | 'scan-barcode'    // 1-QADAM: EAN-13 skanerlash → dori topish
+  | 'medicine-found'  // Dori topildi, GTIN skanerlashga tayyor
+  | 'scan-gtin'       // 2-QADAM: DataMatrix/GTIN skanerlash
+  | 'gtin-saved';     // GTIN saqlandi
 
 export default function ScannerSection() {
   // ═══ State ═══
+  const [step, setStep] = useState<Step>('scan-barcode');
   const [isScanning, setIsScanning] = useState(false);
-  const [lastResult, setLastResult] = useState<ScanResult | null>(null);
-  const [medicine, setMedicine] = useState<Medicine | null>(null);
+  const [currentMedicine, setCurrentMedicine] = useState<Medicine | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [torchOn, setTorchOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const [zoomInfo, setZoomInfo] = useState({ supported: false, min: 1, max: 1, step: 1 });
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
-  const [scanEngine, setScanEngine] = useState<ScanEngine>('native');
-  const [fps, setFps] = useState(0);
   const [scanPaused, setScanPaused] = useState(false);
+  const [lastScannedCode, setLastScannedCode] = useState<string>('');
+  const [savedGtins, setSavedGtins] = useState<MedicineGtin[]>([]);
+  const [showManualInput, setShowManualInput] = useState(false);
+  const [manualBarcode, setManualBarcode] = useState('');
 
   // ═══ Refs ═══
-  const scannerRef = useRef<any>(null); // html5-qrcode instance
+  const scannerRef = useRef<any>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animFrameRef = useRef<number>(0);
   const lastScanTimeRef = useRef<number>(0);
   const fpsCounterRef = useRef({ count: 0, lastTime: Date.now() });
 
-  const { addScan, batchMode, batchScans, toggleBatchMode } = useScannerStore();
+  const { addScan } = useScannerStore();
 
   // ═══ Cleanup ═══
   useEffect(() => {
@@ -73,51 +76,29 @@ export default function ScannerSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // FPS counter
-  useEffect(() => {
-    if (!isScanning) return;
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const elapsed = (now - fpsCounterRef.current.lastTime) / 1000;
-      setFps(Math.round(fpsCounterRef.current.count / elapsed));
-      fpsCounterRef.current = { count: 0, lastTime: now };
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [isScanning]);
-
-  // ═══ Dori qidirish ═══
-  const lookupMedicine = useCallback(async (scanResult: ScanResult) => {
+  // ═══ 1-QADAM: EAN-13 bo'yicha dori qidirish ═══
+  const lookupMedicine = useCallback(async (barcode: string) => {
     setLoading(true);
     setError(null);
-    setMedicine(null);
 
     try {
-      let barcode = scanResult.rawValue;
-      if (scanResult.parsed?.gtin) {
-        barcode = scanResult.parsed.gtin;
-      }
-
       const result = await findMedicineByBarcode(barcode);
 
       if (result.success && result.data) {
-        setMedicine(result.data);
+        setCurrentMedicine(result.data);
+        setStep('medicine-found');
+        setSavedGtins(result.data.gtins || []);
         playBeep('success');
+        vibrateDevice([100, 50, 100]);
       } else {
+        // Bazada yo'q — yaratish
         const createResult = await createMedicine(barcode);
         if (createResult.success && createResult.data) {
-          setMedicine(createResult.data);
+          setCurrentMedicine(createResult.data);
+          setStep('medicine-found');
           playBeep('success');
         } else {
-          if (scanResult.parsed?.gtin) {
-            await saveUnknownGtin({
-              gtin: scanResult.parsed.gtin,
-              rawData: scanResult.rawValue,
-              serial: scanResult.parsed.serial,
-              expiry: scanResult.parsed.expiry,
-              batch: scanResult.parsed.batch,
-            });
-          }
-          setError("Bu kod bo'yicha dori topilmadi");
+          setError("Bu barcode bo'yicha dori topilmadi. Qo'lda kiriting.");
           playBeep('warning');
         }
       }
@@ -129,581 +110,397 @@ export default function ScannerSection() {
     }
   }, []);
 
+  // ═══ 2-QADAM: GTIN saqlash ═══
+  const saveGtin = useCallback(async (rawValue: string) => {
+    if (!currentMedicine) return;
+
+    setLoading(true);
+    try {
+      const parsed = parseGS1DataMatrix(rawValue);
+
+      const result = await addGtin(currentMedicine.id, {
+        gtin: parsed.gtin || rawValue,
+        serial: parsed.serial,
+        expiry: parsed.expiry,
+        batch: parsed.batch,
+      });
+
+      if (result.success && result.data) {
+        setSavedGtins((prev) => [result.data!, ...prev]);
+        setStep('gtin-saved');
+        playBeep('success');
+        vibrateDevice([100, 50, 100]);
+
+        // 2 soniyadan keyin yana GTIN skanerlashga qaytish
+        setTimeout(() => {
+          setStep('scan-gtin');
+        }, 2000);
+      } else {
+        setError(result.error || "GTIN saqlashda xatolik");
+        playBeep('error');
+      }
+    } catch (err) {
+      setError("GTIN saqlashda xatolik");
+      playBeep('error');
+    } finally {
+      setLoading(false);
+    }
+  }, [currentMedicine]);
+
   // ═══ Scan natijasini qayta ishlash ═══
   const processScanResult = useCallback(
-    async (rawValue: string, formatName?: string) => {
-      // Takroriy skanerlashni oldini olish (1.5 soniya ichida)
+    async (rawValue: string) => {
+      // Takroriy skanerlashni oldini olish
       const now = Date.now();
-      if (lastScanTimeRef.current && now - lastScanTimeRef.current < 1500) return;
-      if (lastResultRef.current?.rawValue === rawValue && !batchMode) return;
+      if (lastScanTimeRef.current && now - lastScanTimeRef.current < 2000) return;
+      if (lastScannedCode === rawValue) return;
 
       lastScanTimeRef.current = now;
+      setLastScannedCode(rawValue);
 
       const format = detectBarcodeFormat(rawValue);
-      const parsed = format === 'DATAMATRIX' ? parseGS1DataMatrix(rawValue) : undefined;
 
-      const scanResult: ScanResult = {
+      // Scan logga qo'shish
+      addScan({
         type: format,
-        format: formatName || format,
+        format: format,
         rawValue,
-        parsed,
+        parsed: format === 'DATAMATRIX' ? parseGS1DataMatrix(rawValue) : undefined,
         timestamp: new Date(),
-      };
+      });
 
-      setLastResult(scanResult);
-      lastResultRef.current = scanResult;
-      addScan(scanResult);
-
-      // Ovoz + vibratsiya
-      playBeep('success');
-      vibrateDevice([100, 50, 100]);
-
-      // Batch mode da faqat saqlash, dori qidirmaydi
-      if (!batchMode) {
-        await lookupMedicine(scanResult);
-      }
-
-      // Scan pause — 1.5 soniya kutish (takroriy scan oldini olish)
       setScanPaused(true);
-      setTimeout(() => setScanPaused(false), 1500);
+      setTimeout(() => setScanPaused(false), 2000);
+
+      // ═══ 1-QADAM: EAN-13 bo'lsa → dori qidirish ═══
+      if (step === 'scan-barcode' && (format === 'EAN13' || format === 'UNKNOWN')) {
+        await lookupMedicine(rawValue);
+        return;
+      }
+
+      // ═══ 2-QADAM: DataMatrix bo'lsa → GTIN saqlash ═══
+      if (step === 'scan-gtin' && format === 'DATAMATRIX') {
+        await saveGtin(rawValue);
+        return;
+      }
+
+      // Noto'g'ri format
+      if (step === 'scan-barcode' && format === 'DATAMATRIX') {
+        setError("Avval dori shtrix kodini (EAN-13) skanerlang");
+        playBeep('warning');
+      } else if (step === 'scan-gtin' && format === 'EAN13') {
+        setError("Hozir GTIN (DataMatrix) skanerlash kerak");
+        playBeep('warning');
+      }
     },
-    [addScan, batchMode, lookupMedicine]
+    [step, lookupMedicine, saveGtin, addScan, lastScannedCode]
   );
 
-  const lastResultRef = useRef<ScanResult | null>(null);
-
-  // ═══ Native BarcodeDetector loop ═══
-  const startNativeScan = useCallback(
-    async (stream: MediaStream) => {
-      streamRef.current = stream;
-
-      // Video element yaratish
-      let video = videoRef.current;
-      if (!video) {
-        video = document.createElement('video');
-        video.setAttribute('playsinline', 'true');
-        video.setAttribute('autoplay', 'true');
-        video.muted = true;
-        videoRef.current = video;
-      }
-
-      video.srcObject = stream;
-      await video.play();
-
-      // Container ga qo'shish
-      const container = document.getElementById('qr-reader');
-      if (container) {
-        container.innerHTML = '';
-        container.appendChild(video);
-        video.style.width = '100%';
-        video.style.height = '100%';
-        video.style.objectFit = 'cover';
-        video.style.borderRadius = '1rem';
-      }
-
-      // Torch/Zoom imkoniyatlarini tekshirish
-      setTorchSupported(isTorchSupported(stream));
-      setZoomInfo(getZoomCapabilities(stream));
-
-      // Scan loop
-      const scanLoop = async () => {
-        if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) {
-          animFrameRef.current = requestAnimationFrame(scanLoop);
-          return;
-        }
-
-        // FPS counter
-        fpsCounterRef.current.count++;
-
-        // Pause bo'lsa scan qilmaydi
-        if (!scanPaused) {
-          const result = await detectBarcodeFromVideo(videoRef.current);
-          if (result) {
-            await processScanResult(result.rawValue, result.format);
-          }
-        }
-
-        animFrameRef.current = requestAnimationFrame(scanLoop);
-      };
-
-      animFrameRef.current = requestAnimationFrame(scanLoop);
-    },
-    [processScanResult, scanPaused]
-  );
-
-  // ═══ html5-qrcode fallback ═══
-  const startHtml5QrScan = useCallback(async () => {
-    const { Html5Qrcode } = await import('html5-qrcode');
-
-    if (scannerRef.current) {
-      await scannerRef.current.stop();
-    }
-
-    const scanner = new Html5Qrcode('qr-reader');
-    scannerRef.current = scanner;
-
-    const config = {
-      fps: 15,
-      qrbox: { width: 250, height: 250 },
-      aspectRatio: 1.0,
-      formatsToSupport: [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-      ],
-    };
-
-    const onScanSuccess = (decodedText: string, decodedResult: any) => {
-      processScanResult(
-        decodedText,
-        decodedResult?.result?.format?.formatName
-      );
-    };
-
-    const onScanFailure = () => {};
-
-    await scanner.start(
-      { facingMode },
-      config,
-      onScanSuccess,
-      onScanFailure
-    );
-
-    // Torch imkoniyatini tekshirish (html5-qrcode stream orqali)
-    try {
-      const stream = (scanner as any)._localMediaStream;
-      if (stream) {
-        setTorchSupported(isTorchSupported(stream));
-        setZoomInfo(getZoomCapabilities(stream));
-      }
-    } catch {}
-  }, [facingMode, processScanResult]);
-
-  // ═══ Skanerlashni boshlash ═══
+  // ═══ Kamera ═══
   const startScanner = useCallback(async () => {
     try {
       setError(null);
-      lastResultRef.current = null;
+      setLastScannedCode('');
 
-      // Native BarcodeDetector tekshirish
       if (isNativeBarcodeSupported()) {
-        setScanEngine('native');
         const stream = await createCameraStream(facingMode);
         if (stream) {
+          streamRef.current = stream;
           setIsScanning(true);
-          await startNativeScan(stream);
+          setTorchSupported(isTorchSupported(stream));
+
+          let video = videoRef.current;
+          if (!video) {
+            video = document.createElement('video');
+            video.setAttribute('playsinline', 'true');
+            video.setAttribute('autoplay', 'true');
+            video.muted = true;
+            videoRef.current = video;
+          }
+
+          video.srcObject = stream;
+          await video.play();
+
+          const container = document.getElementById('qr-reader');
+          if (container) {
+            container.innerHTML = '';
+            container.appendChild(video);
+            video.style.width = '100%';
+            video.style.height = '100%';
+            video.style.objectFit = 'cover';
+            video.style.borderRadius = '1rem';
+          }
+
+          const scanLoop = async () => {
+            if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) {
+              animFrameRef.current = requestAnimationFrame(scanLoop);
+              return;
+            }
+
+            if (!scanPaused) {
+              const result = await detectBarcodeFromVideo(videoRef.current);
+              if (result) {
+                await processScanResult(result.rawValue);
+              }
+            }
+
+            animFrameRef.current = requestAnimationFrame(scanLoop);
+          };
+
+          animFrameRef.current = requestAnimationFrame(scanLoop);
           return;
         }
       }
 
       // Fallback: html5-qrcode
-      setScanEngine('html5qrcode');
+      const { Html5Qrcode } = await import('html5-qrcode');
+      if (scannerRef.current) await scannerRef.current.stop();
+
+      const scanner = new Html5Qrcode('qr-reader');
+      scannerRef.current = scanner;
+
+      await scanner.start(
+        { facingMode },
+        { fps: 15, qrbox: { width: 250, height: 250 } },
+        (text: string) => processScanResult(text),
+        () => {}
+      );
+
       setIsScanning(true);
-      await startHtml5QrScan();
     } catch (err: any) {
-      console.error('Scanner start error:', err);
-      setError("Kamera ochilmadi. Kamera ruxsatini bering.");
-      setIsScanning(false);
+      console.error('Scanner error:', err);
+      setError("Kamera ochilmadi. Ruxsat bering.");
     }
-  }, [facingMode, startNativeScan, startHtml5QrScan]);
+  }, [facingMode, scanPaused, processScanResult]);
 
-  // ═══ Skanerlashni to'xtatish ═══
   const stopScanner = useCallback(async () => {
-    // Native scanner to'xtatish
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = 0;
-    }
-
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-      videoRef.current = null;
-    }
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    // html5-qrcode to'xtatish
-    try {
-      if (scannerRef.current) {
-        await scannerRef.current.stop();
-        scannerRef.current = null;
-      }
-    } catch {}
-
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    if (videoRef.current) { videoRef.current.srcObject = null; videoRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    try { if (scannerRef.current) { await scannerRef.current.stop(); scannerRef.current = null; } } catch {}
     setIsScanning(false);
     setTorchOn(false);
-    setZoomLevel(1);
-    setFps(0);
   }, []);
 
-  // ═══ Torch toggle ═══
   const handleTorchToggle = useCallback(async () => {
-    const stream = streamRef.current;
-    if (!stream) return;
-
-    const success = await toggleTorch(stream, !torchOn);
-    if (success) {
-      setTorchOn(!torchOn);
-    }
+    if (!streamRef.current) return;
+    const success = await toggleTorch(streamRef.current, !torchOn);
+    if (success) setTorchOn(!torchOn);
   }, [torchOn]);
 
-  // ═══ Zoom ═══
-  const handleZoom = useCallback(
-    async (direction: 'in' | 'out') => {
-      const stream = streamRef.current;
-      if (!stream || !zoomInfo.supported) return;
-
-      const newZoom =
-        direction === 'in'
-          ? Math.min(zoomLevel + 1, zoomInfo.max)
-          : Math.max(zoomLevel - 1, zoomInfo.min);
-
-      const success = await setZoom(stream, newZoom);
-      if (success) {
-        setZoomLevel(newZoom);
-      }
-    },
-    [zoomLevel, zoomInfo]
-  );
-
-  // ═══ Kamera almashtirish ═══
   const switchCamera = useCallback(async () => {
     const newMode = facingMode === 'environment' ? 'user' : 'environment';
     setFacingMode(newMode);
-
     if (isScanning) {
       await stopScanner();
-      // Kichik delay — kamera to'liq yopilishi uchun
-      setTimeout(() => {
-        startScanner();
-      }, 300);
+      setTimeout(() => startScanner(), 300);
     }
   }, [facingMode, isScanning, stopScanner, startScanner]);
 
-  // ═══ Rasm fayldan skanerlash (galereya yoki kamera) ═══
-  const handleImageUpload = useCallback(async () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    // capture atributi YO'Q — foydalanuvchi galereyadan yoki kameradan tanlashi mumkin
+  // ═══ Qo'lda barcode kiritish ═══
+  const handleManualInput = async () => {
+    if (!manualBarcode.trim()) return;
+    await lookupMedicine(manualBarcode.trim());
+    setShowManualInput(false);
+    setManualBarcode('');
+  };
 
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
+  // ═══ Yangi dori uchun ═══
+  const handleNewMedicine = () => {
+    setCurrentMedicine(null);
+    setSavedGtins([]);
+    setStep('scan-barcode');
+    setLastScannedCode('');
+    setError(null);
+  };
 
-      try {
-        // Native API bilan rasm dan o'qish
-        if (isNativeBarcodeSupported()) {
-          const { detectBarcodeFromImage } = await import('@/lib/native-scanner');
-          const result = await detectBarcodeFromImage(file);
-          if (result) {
-            await processScanResult(result.rawValue, result.format);
-            return;
-          }
-        }
-
-        // html5-qrcode fallback
-        const { Html5Qrcode } = await import('html5-qrcode');
-        const scanner = new Html5Qrcode('qr-reader-temp');
-        try {
-          const result = await scanner.scanFile(file, true);
-          await processScanResult(result);
-        } catch {
-          setError("Rasm dan kod o'qib bo'lmadi. Aniqroq rasm sinab ko'ring.");
-          playBeep('error');
-        } finally {
-          await scanner.clear();
-        }
-      } catch (err) {
-        setError("Rasm qayta ishlashda xatolik");
-      }
-    };
-
-    input.click();
-  }, [processScanResult]);
-
-  // ═══ Batch hisob ═══
-  const matchedCount = batchScans.filter((s: any) => s.medicine).length;
-  const unmatchedCount = batchScans.length - matchedCount;
-
+  // ═══ Render ═══
   return (
     <div className="space-y-4">
-      {/* ═══ Engine indicator ═══ */}
-      {isScanning && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="flex items-center justify-between text-xs"
-        >
-          <div className="flex items-center gap-2">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                scanEngine === 'native' ? 'bg-success animate-pulse' : 'bg-accent'
-              }`}
-            />
-            <span className="text-muted">
-              {scanEngine === 'native' ? 'Native Engine' : 'html5-qrcode'}
-            </span>
-          </div>
-          <div className="flex items-center gap-3 text-muted">
-            {fps > 0 && (
-              <span className="flex items-center gap-1">
-                <Gauge size={12} /> {fps} FPS
-              </span>
-            )}
-          </div>
-        </motion.div>
-      )}
+      {/* ═══ QADAM KO'RSATKICHI ═══ */}
+      <div className="flex items-center gap-2 text-xs">
+        <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${
+          step === 'scan-barcode' ? 'bg-primary text-white' : 'bg-primary/20 text-primary'
+        }`}>
+          <ScanBarcode size={12} />
+          <span>1. Shtrix kod</span>
+        </div>
+        <ArrowRight size={14} className="text-muted" />
+        <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${
+          step === 'scan-gtin' || step === 'gtin-saved' ? 'bg-success text-white' : 'bg-card text-muted'
+        }`}>
+          <Tag size={12} />
+          <span>2. GTIN saqlash</span>
+        </div>
+      </div>
 
-      {/* ═══ Asosiy tugmalar ═══ */}
+      {/* ═══ DORI TOPILGANDA ═══ */}
+      <AnimatePresence>
+        {currentMedicine && (
+          <motion.div
+            initial={{ y: -10, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -10, opacity: 0 }}
+            className="bg-success/10 border border-success/30 rounded-xl p-4"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-success/20 rounded-xl flex items-center justify-center">
+                  <Package size={20} className="text-success" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm">{currentMedicine.name}</h3>
+                  <p className="text-xs text-muted">
+                    {currentMedicine.manufacturer || "Ishlab chiqaruvchi noma'lum"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleNewMedicine}
+                className="p-2 rounded-lg hover:bg-card transition-colors"
+                title="Yangi dori"
+              >
+                <X size={16} className="text-muted" />
+              </button>
+            </div>
+
+            {/* Saqlangan GTIN lar */}
+            {savedGtins.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-success/20">
+                <p className="text-xs text-muted mb-2">
+                  Saqlangan GTIN lar: {savedGtins.length}
+                </p>
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {savedGtins.map((g) => (
+                    <div key={g.id} className="flex items-center justify-between text-xs bg-background/50 rounded-lg px-3 py-1.5">
+                      <span className="font-mono">{g.gtin}</span>
+                      {g.serial && <span className="text-muted">SN: {g.serial}</span>}
+                      <span className="text-success text-[10px]">✓</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ TUGMALAR ═══ */}
       <div className="flex gap-2">
         {!isScanning ? (
           <>
-            {/* Kamera tanlash (orqa/old) */}
             <motion.button
-              whileTap={{ scale: 0.95 }}
+              whileTap={{ scale: 0.98 }}
               onClick={() => setFacingMode(facingMode === 'environment' ? 'user' : 'environment')}
-              aria-label={facingMode === 'environment' ? "Old kameraga o'tish" : "Orqa kameraga o'tish"}
-              className={`h-14 px-4 rounded-xl font-semibold flex items-center gap-2 touch-target border transition-colors ${
-                facingMode === 'user'
-                  ? 'bg-primary/20 text-primary border-primary/50'
-                  : 'bg-card hover:bg-card-hover text-foreground border-border'
+              className={`h-12 px-3 rounded-xl font-medium flex items-center gap-1.5 border transition-colors text-sm ${
+                facingMode === 'user' ? 'bg-primary/20 text-primary border-primary/50' : 'bg-card text-muted border-border'
               }`}
             >
-              <SwitchCamera size={20} aria-hidden="true" />
-              <span className="text-xs">{facingMode === 'environment' ? 'Orqa' : 'Old'}</span>
+              <SwitchCamera size={16} />
+              <span className="hidden sm:inline">{facingMode === 'environment' ? 'Orqa' : 'Old'}</span>
             </motion.button>
 
             <motion.button
-              whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={startScanner}
-              aria-label="Kamerani yoqish va skanerlashni boshlash"
-              className="flex-1 h-14 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25 touch-target"
+              className="flex-1 h-12 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg"
             >
-              <Camera size={22} aria-hidden="true" />
-              Skanerlash
+              <Camera size={20} />
+              {step === 'scan-barcode' ? 'Shtrix kod skanerlash' : 'GTIN skanerlash'}
             </motion.button>
 
             <motion.button
-              whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={handleImageUpload}
-              aria-label="Galereyadan rasm tanlash"
-              className="h-14 px-4 bg-card hover:bg-card-hover text-foreground rounded-xl font-semibold flex items-center gap-2 touch-target border border-border"
+              onClick={() => setShowManualInput(true)}
+              className="h-12 px-3 bg-card hover:bg-card-hover rounded-xl font-medium flex items-center gap-1.5 border border-border text-sm"
             >
-              <ImagePlus size={20} aria-hidden="true" />
+              <Plus size={16} />
             </motion.button>
           </>
         ) : (
           <>
             <motion.button
-              whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={stopScanner}
-              aria-label="Skanerlashni to'xtatish"
-              className="flex-1 h-14 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg shadow-red-500/25 touch-target"
+              className="flex-1 h-12 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2"
             >
-              <CameraOff size={22} aria-hidden="true" />
+              <CameraOff size={20} />
               To&apos;xtatish
             </motion.button>
 
-            {/* Torch */}
             {torchSupported && (
               <motion.button
                 whileTap={{ scale: 0.95 }}
                 onClick={handleTorchToggle}
-                aria-label={torchOn ? "Chiroqni o'chirish" : "Chiroqni yoqish"}
-                className={`h-14 px-4 rounded-xl font-semibold flex items-center gap-2 touch-target border transition-colors ${
-                  torchOn
-                    ? 'bg-accent text-background border-accent'
-                    : 'bg-card hover:bg-card-hover text-foreground border-border'
+                className={`h-12 px-3 rounded-xl border transition-colors ${
+                  torchOn ? 'bg-accent text-background border-accent' : 'bg-card text-foreground border-border'
                 }`}
               >
-                {torchOn ? <FlashlightOff size={20} /> : <Flashlight size={20} />}
+                {torchOn ? <FlashlightOff size={18} /> : <Flashlight size={18} />}
               </motion.button>
             )}
 
-            {/* Kamera almashtirish (skanerlash paytida) */}
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={switchCamera}
-              aria-label="Kamerani almashtirish"
-              className={`h-14 px-4 rounded-xl font-semibold flex items-center gap-2 touch-target border transition-colors ${
-                facingMode === 'user'
-                  ? 'bg-primary/20 text-primary border-primary/50'
-                  : 'bg-card hover:bg-card-hover text-foreground border-border'
-              }`}
+              className="h-12 px-3 bg-card rounded-xl border border-border"
             >
-              <SwitchCamera size={20} aria-hidden="true" />
+              <SwitchCamera size={18} />
             </motion.button>
           </>
         )}
-
-        {/* Batch mode */}
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={toggleBatchMode}
-          aria-label={batchMode ? "Batch rejimini o'chirish" : "Batch rejimini yoqish"}
-          aria-pressed={batchMode}
-          className={`h-14 px-5 rounded-xl font-semibold flex items-center gap-2 touch-target transition-colors ${
-            batchMode
-              ? 'bg-accent text-background'
-              : 'bg-card hover:bg-card-hover text-foreground border border-border'
-          }`}
-        >
-          <Layers size={20} />
-          {batchMode ? 'ON' : 'OFF'}
-        </motion.button>
       </div>
 
-      {/* ═══ Zoom nazorati ═══ */}
-      <AnimatePresence>
-        {isScanning && zoomInfo.supported && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="flex items-center gap-3"
-          >
-            <ZoomOut size={16} className="text-muted" />
-            <input
-              type="range"
-              min={zoomInfo.min}
-              max={zoomInfo.max}
-              step={zoomInfo.step}
-              value={zoomLevel}
-              onChange={(e) => {
-                const newZoom = parseFloat(e.target.value);
-                setZoomLevel(newZoom);
-                if (streamRef.current) {
-                  setZoom(streamRef.current, newZoom);
-                }
-              }}
-              className="flex-1 h-2 bg-card rounded-full appearance-none cursor-pointer accent-primary"
-            />
-            <ZoomIn size={16} className="text-muted" />
-            <span className="text-xs text-muted font-mono w-8">{zoomLevel.toFixed(1)}x</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ═══ Batch mode holati ═══ */}
-      <AnimatePresence>
-        {batchMode && batchScans.length > 0 && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="bg-accent/10 border border-accent/30 rounded-xl p-4"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Zap size={20} className="text-accent" />
-                <span className="font-medium">Batch rejimi</span>
-              </div>
-              <div className="flex gap-4 text-sm">
-                <span className="text-success flex items-center gap-1">
-                  <CheckCircle2 size={14} /> {matchedCount}
-                </span>
-                <span className="text-danger flex items-center gap-1">
-                  <XCircle size={14} /> {unmatchedCount}
-                </span>
-                <span className="text-muted flex items-center gap-1">
-                  <ScanBarcode size={14} /> {batchScans.length}
-                </span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ═══ Skaner oynasi ═══ */}
-      <div className="relative rounded-2xl overflow-hidden bg-card min-h-[350px]">
+      {/* ═══ SKANER OYNASI ═══ */}
+      <div className="relative rounded-2xl overflow-hidden bg-card min-h-[300px]">
         <div
           id="qr-reader"
-          ref={useRef<HTMLDivElement>(null)}
-          className={`w-full min-h-[350px] ${isScanning ? 'block' : 'hidden'}`}
+          className={`w-full min-h-[300px] ${isScanning ? 'block' : 'hidden'}`}
         />
-        <div id="qr-reader-temp" className="hidden" />
 
         {!isScanning && (
-          <div className="flex flex-col items-center justify-center h-[350px] text-muted">
-            <div className="relative">
-              <ScanBarcode size={72} className="mb-4 opacity-20" />
-              <Crosshair
-                size={24}
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-primary/40"
-              />
-            </div>
-            <p className="text-sm font-medium">Skanerlash uchun kamerani yoqing</p>
-            <p className="text-xs mt-1 opacity-60">EAN-13 · DataMatrix · QR</p>
-            <div className="flex gap-2 mt-3">
-              {isNativeBarcodeSupported() && (
-                <span className="text-[10px] bg-success/20 text-success px-2 py-0.5 rounded-full">
-                  Native Engine
-                </span>
-              )}
-              <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded-full">
-                Mobil kamera
-              </span>
-            </div>
+          <div className="flex flex-col items-center justify-center h-[300px] text-muted">
+            <ScanBarcode size={64} className="mb-3 opacity-20" />
+            <p className="text-sm font-medium">
+              {step === 'scan-barcode'
+                ? "Dori shtrix kodini (EAN-13) skanerlang"
+                : "GTIN (DataMatrix) kodini skanerlang"}
+            </p>
+            <p className="text-xs mt-1 opacity-60">
+              {step === 'scan-barcode'
+                ? "Masalan: 4607015470868"
+                : "Har bir dori paketidagi DataMatrix kod"}
+            </p>
           </div>
         )}
 
-        {/* ═══ Lazer chiziq animatsiyasi ═══ */}
+        {/* Lazer animatsiya */}
         {isScanning && (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            {/* Burchak markerlari */}
-            <div className="absolute top-3 left-3 w-10 h-10 border-t-[3px] border-l-[3px] border-blue-500 rounded-tl-xl" />
-            <div className="absolute top-3 right-3 w-10 h-10 border-t-[3px] border-r-[3px] border-blue-500 rounded-tr-xl" />
-            <div className="absolute bottom-3 left-3 w-10 h-10 border-b-[3px] border-l-[3px] border-blue-500 rounded-bl-xl" />
-            <div className="absolute bottom-3 right-3 w-10 h-10 border-b-[3px] border-r-[3px] border-blue-500 rounded-br-xl" />
+            <div className="absolute top-3 left-3 w-8 h-8 border-t-2 border-l-2 border-blue-500 rounded-tl-lg" />
+            <div className="absolute top-3 right-3 w-8 h-8 border-t-2 border-r-2 border-blue-500 rounded-tr-lg" />
+            <div className="absolute bottom-3 left-3 w-8 h-8 border-b-2 border-l-2 border-blue-500 rounded-bl-lg" />
+            <div className="absolute bottom-3 right-3 w-8 h-8 border-b-2 border-r-2 border-blue-500 rounded-br-lg" />
 
-            {/* Lazer chiziq */}
             <div className="absolute left-6 right-6 h-[2px] top-0">
               <motion.div
                 className="w-full h-full"
                 style={{
-                  background:
-                    'linear-gradient(90deg, transparent 0%, rgba(59, 130, 246, 0) 10%, rgba(59, 130, 246, 0.8) 50%, rgba(59, 130, 246, 0) 90%, transparent 100%)',
-                  boxShadow: '0 0 15px rgba(59, 130, 246, 0.5), 0 0 30px rgba(59, 130, 246, 0.2)',
+                  background: 'linear-gradient(90deg, transparent 0%, rgba(59,130,246,0) 10%, rgba(59,130,246,0.8) 50%, rgba(59,130,246,0) 90%, transparent 100%)',
+                  boxShadow: '0 0 15px rgba(59,130,246,0.5)',
                 }}
-                animate={{
-                  top: ['5%', '95%', '5%'],
-                }}
-                transition={{
-                  duration: 2.5,
-                  repeat: Infinity,
-                  ease: 'easeInOut',
-                }}
+                animate={{ top: ['5%', '95%', '5%'] }}
+                transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
               />
             </div>
 
-            {/* Markaziy crosshair */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-              <div className="w-16 h-16 border border-white/10 rounded-lg" />
-              <div className="absolute top-1/2 left-0 w-4 h-[1px] bg-white/30" />
-              <div className="absolute top-1/2 right-0 w-4 h-[1px] bg-white/30" />
-              <div className="absolute top-0 left-1/2 h-4 w-[1px] bg-white/30" />
-              <div className="absolute bottom-0 left-1/2 h-4 w-[1px] bg-white/30" />
-            </div>
-
-            {/* Scan pause indikatori */}
             {scanPaused && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
                 className="absolute inset-0 bg-success/5 flex items-center justify-center"
               >
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  className="bg-success/20 rounded-full p-3"
-                >
+                <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="bg-success/20 rounded-full p-3">
                   <CheckCircle2 size={32} className="text-success" />
                 </motion.div>
               </motion.div>
@@ -712,94 +509,66 @@ export default function ScannerSection() {
         )}
       </div>
 
-      {/* ═══ Xatolik ═══ */}
+      {/* ═══ XATOLIK ═══ */}
       <AnimatePresence>
         {error && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="bg-danger/10 border border-danger/30 rounded-xl p-4 flex items-center gap-3"
+            className="bg-danger/10 border border-danger/30 rounded-xl p-3 flex items-center gap-2"
           >
-            <AlertCircle size={20} className="text-danger flex-shrink-0" />
+            <AlertCircle size={16} className="text-danger flex-shrink-0" />
             <p className="text-sm text-danger">{error}</p>
+            <button onClick={() => setError(null)} className="ml-auto">
+              <X size={14} className="text-danger" />
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ═══ Loading ═══ */}
+      {/* ═══ LOADING ═══ */}
       {loading && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="flex items-center justify-center gap-3 py-4"
-        >
-          <Loader2 size={20} className="animate-spin text-primary" />
-          <span className="text-sm text-muted">Dori qidirilmoqda...</span>
-        </motion.div>
+        <div className="flex items-center justify-center gap-2 py-3">
+          <Loader2 size={18} className="animate-spin text-primary" />
+          <span className="text-sm text-muted">Qidirilmoqda...</span>
+        </div>
       )}
 
-      {/* ═══ Oxirgi natija ═══ */}
+      {/* ═══ QO'LDA KIRITISH ═══ */}
       <AnimatePresence>
-        {lastResult && !loading && (
+        {showManualInput && (
           <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -10, opacity: 0 }}
-            className="bg-card rounded-xl p-4 border border-border"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-card rounded-xl border border-border p-4 space-y-3"
           >
-            <div className="flex items-start justify-between mb-2">
-              <span className="text-xs font-mono text-muted bg-background px-2 py-1 rounded">
-                {lastResult.type}
-              </span>
-              <span className="text-xs text-muted">
-                {lastResult.timestamp.toLocaleTimeString('uz-UZ')}
-              </span>
+            <p className="text-sm font-medium">Barcode raqamini kiriting</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={manualBarcode}
+                onChange={(e) => setManualBarcode(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleManualInput()}
+                placeholder="Masalan: 4607015470868"
+                className="flex-1 h-10 bg-background border border-border rounded-lg px-3 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                autoFocus
+              />
+              <button
+                onClick={handleManualInput}
+                disabled={!manualBarcode.trim()}
+                className="h-10 px-4 bg-primary text-white rounded-lg text-sm font-medium disabled:opacity-50"
+              >
+                Qidirish
+              </button>
             </div>
-            <p className="font-mono text-sm break-all text-foreground">
-              {formatScanResult(lastResult.rawValue)}
-            </p>
-            {lastResult.parsed && (
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                {lastResult.parsed.gtin && (
-                  <div className="bg-background rounded-lg px-3 py-2">
-                    <span className="text-muted">GTIN</span>
-                    <p className="font-mono mt-0.5">{lastResult.parsed.gtin}</p>
-                  </div>
-                )}
-                {lastResult.parsed.serial && (
-                  <div className="bg-background rounded-lg px-3 py-2">
-                    <span className="text-muted">Serial</span>
-                    <p className="font-mono mt-0.5">{lastResult.parsed.serial}</p>
-                  </div>
-                )}
-                {lastResult.parsed.expiry && (
-                  <div className="bg-background rounded-lg px-3 py-2">
-                    <span className="text-muted">Yaroqlilik</span>
-                    <p className="font-mono mt-0.5">{lastResult.parsed.expiry}</p>
-                  </div>
-                )}
-                {lastResult.parsed.batch && (
-                  <div className="bg-background rounded-lg px-3 py-2">
-                    <span className="text-muted">Partiya</span>
-                    <p className="font-mono mt-0.5">{lastResult.parsed.batch}</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ═══ Dori kartochkasi ═══ */}
-      <AnimatePresence>
-        {medicine && !loading && (
-          <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -10, opacity: 0 }}
-          >
-            <MedicineCard medicine={medicine} />
+            <button
+              onClick={() => { setShowManualInput(false); setManualBarcode(''); }}
+              className="text-xs text-muted"
+            >
+              Bekor qilish
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
