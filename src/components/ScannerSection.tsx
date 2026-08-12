@@ -78,6 +78,10 @@ export default function ScannerSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ═══ GOPHARM.UZ QIDIRUV HOLATI ═══
+  const [gopharmResults, setGopharmResults] = useState<any[]>([]);
+  const [gopharmLoading, setGopharmLoading] = useState(false);
+
   // ═══ DORI QIDIRISH ═══
   const lookupMedicine = useCallback(async (barcode: string) => {
     setLoading(true);
@@ -88,22 +92,54 @@ export default function ScannerSection() {
       const data = await res.json();
 
       if (data.success && data.data) {
-        // TOPILDI!
         setCurrentMedicine(data.data);
         setSavedGtins(data.data.gtins || []);
         setStep('medicine-found');
         playBeep('success');
         vibrateDevice([100, 50, 100]);
       } else {
-        // TOPILMADI — qo'lda kiritish formasi
+        // TOPILMADI — gopharm.uz dan qidirish
         setStep('manual-entry');
         playBeep('warning');
+        setGopharmLoading(true);
+        try {
+          const gRes = await fetch(`/api/gopharm/search?q=${encodeURIComponent(barcode)}`);
+          const gData = await gRes.json();
+          if (gData.success && gData.data) {
+            setGopharmResults(gData.data);
+          }
+        } catch {}
+        setGopharmLoading(false);
       }
     } catch (err) {
       setError("Qidirishda xatolik");
       playBeep('error');
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // Gopharm.uz dan product tanlash — formaga to'ldirish
+  const selectGopharmProduct = useCallback(async (slug: string) => {
+    setGopharmLoading(true);
+    try {
+      const res = await fetch(`/api/gopharm/product/${slug}`);
+      const data = await res.json();
+      if (data.success && data.data) {
+        setManualForm({
+          name: data.data.name || '',
+          manufacturer: data.data.manufacturer || '',
+          price: data.data.price?.toString() || '',
+          dosageForm: data.data.dosageForm || '',
+          activeSubstance: data.data.activeSubstance || '',
+          dosage: data.data.dosage || '',
+        });
+        setGopharmResults([]);
+      }
+    } catch {
+      setError("Product yuklashda xatolik");
+    } finally {
+      setGopharmLoading(false);
     }
   }, []);
 
@@ -538,12 +574,61 @@ export default function ScannerSection() {
                 Saqlash
               </button>
               <button
-                onClick={() => { setStep('scan-barcode'); setError(null); }}
+                onClick={() => { setStep('scan-barcode'); setError(null); setGopharmResults([]); }}
                 className="h-10 px-4 bg-card-hover text-muted rounded-lg text-sm"
               >
                 Bekor
               </button>
             </div>
+
+            {/* gopharm.uz natijalari */}
+            {gopharmLoading && (
+              <div className="flex items-center gap-2 py-2">
+                <Loader2 size={14} className="animate-spin text-primary" />
+                <span className="text-xs text-muted">gopharm.uz dan qidirilmoqda...</span>
+              </div>
+            )}
+
+            {gopharmResults.length > 0 && (
+              <div className="border-t border-border pt-3">
+                <p className="text-xs text-muted mb-2">gopharm.uz dan topildi: {gopharmResults.length} ta</p>
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {gopharmResults.map((item: any) => (
+                    <button
+                      key={item.slug}
+                      onClick={() => selectGopharmProduct(item.slug)}
+                      className="w-full text-left bg-background hover:bg-primary/10 rounded-lg p-2.5 flex items-center gap-2 transition-colors"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate">{item.name}</p>
+                        {item.manufacturer && (
+                          <p className="text-[10px] text-muted truncate">{item.manufacturer}</p>
+                        )}
+                      </div>
+                      {item.price && (
+                        <span className="text-[10px] text-success font-medium flex-shrink-0">
+                          {new Intl.NumberFormat('uz-UZ').format(item.price)}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {gopharmResults.length === 0 && !gopharmLoading && (
+              <div className="border-t border-border pt-3">
+                <button
+                  onClick={() => {
+                    const q = manualForm.name || lastScannedBarcode.current;
+                    window.open(`https://gopharm.uz/search?q=${encodeURIComponent(q)}`, '_blank');
+                  }}
+                  className="w-full text-xs text-primary hover:underline text-center py-1"
+                >
+                  gopharm.uz da qidirish →
+                </button>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
