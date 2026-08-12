@@ -25,9 +25,11 @@ export default function Header() {
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
           {/* Logo */}
           <a href="/" className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/25">
-              <Pill size={20} className="text-white" />
-            </div>
+            <img
+              src="/logo.svg"
+              alt="Dorixona Skaner"
+              className="w-10 h-10 rounded-xl shadow-lg shadow-blue-500/25"
+            />
             <div>
               <h1 className="text-lg font-bold text-foreground">Dorixona Skaner</h1>
               <p className="text-xs text-muted">Dori kod skaneri</p>

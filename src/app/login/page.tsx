@@ -50,14 +50,14 @@ export default function LoginPage() {
       >
         {/* Logo */}
         <div className="text-center mb-8">
-          <motion.div
+          <motion.img
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ type: 'spring', delay: 0.2 }}
-            className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/25"
-          >
-            <Pill size={40} className="text-white" />
-          </motion.div>
+            src="/logo.svg"
+            alt="Dorixona Skaner"
+            className="w-24 h-24 rounded-2xl mx-auto mb-4 shadow-lg shadow-blue-500/25"
+          />
           <h1 className="text-2xl font-bold text-white">Dorixona Skaner</h1>
           <p className="text-sm text-gray-400 mt-1">Davom etish uchun kirish</p>
         </div>
