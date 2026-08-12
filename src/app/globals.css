@@ -1,0 +1,198 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+/* ═══ DARK MODE (default) ═══ */
+:root,
+.dark {
+  --color-background: #0f172a;
+  --color-foreground: #f8fafc;
+  --color-card: #1e293b;
+  --color-card-hover: #334155;
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #ffffff;
+  --color-success: #10b981;
+  --color-success-foreground: #ffffff;
+  --color-accent: #f59e0b;
+  --color-muted: #64748b;
+  --color-muted-foreground: #94a3b8;
+  --color-border: #334155;
+  --color-danger: #ef4444;
+  color-scheme: dark;
+}
+
+/* ═══ LIGHT MODE ═══ */
+.light {
+  --color-background: #f8fafc;
+  --color-foreground: #0f172a;
+  --color-card: #ffffff;
+  --color-card-hover: #f1f5f9;
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+  --color-success: #059669;
+  --color-success-foreground: #ffffff;
+  --color-accent: #d97706;
+  --color-muted: #64748b;
+  --color-muted-foreground: #475569;
+  --color-border: #e2e8f0;
+  --color-danger: #dc2626;
+  color-scheme: light;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Skaner overlay */
+.scanner-overlay {
+  position: relative;
+  overflow: hidden;
+}
+
+.scanner-overlay::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #3b82f6, transparent);
+  animation: scan-line 2s ease-in-out infinite;
+  z-index: 10;
+}
+
+@keyframes scan-line {
+  0% { top: 0; }
+  50% { top: calc(100% - 3px); }
+  100% { top: 0; }
+}
+
+/* Video element styling */
+#qr-reader video {
+  border-radius: 1rem !important;
+  object-fit: cover !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#qr-reader {
+  border: none !important;
+  background: transparent !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted);
+}
+
+/* Beep effect flash */
+.flash-success {
+  animation: flash 0.3s ease-out;
+}
+
+@keyframes flash {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { box-shadow: 0 0 0 20px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+/* PWA install banner */
+@supports (display-mode: standalone) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Touch targets - katta tugmalar */
+.touch-target {
+  min-height: 48px;
+  min-width: 48px;
+}
+
+/* ═══ Zoom slider ═══ */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: var(--color-card);
+  border-radius: 3px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+/* ═══ Scan success flash ═══ */
+@keyframes scan-flash {
+  0% { background: transparent; }
+  50% { background: rgba(16, 185, 129, 0.1); }
+  100% { background: transparent; }
+}
+
+.scan-flash-active {
+  animation: scan-flash 0.4s ease-out;
+}
+
+/* ═══ Safe area (notch telefonlar) ═══ */
+@supports (padding-top: env(safe-area-inset-top)) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+/* ═══ Select option ranglari (dark mode) ═══ */
+.dark select option {
+  background-color: #1e293b;
+  color: #f8fafc;
+}
+
+/* ═══ Checkbox ranglari ═══ */
+input[type="checkbox"] {
+  accent-color: var(--color-primary);
+}

@@ -1,0 +1,231 @@
+// Dorixona Skaner — Prisma Database Schema
+// PostgreSQL asosiy ma'lumotlar bazasi
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════
+// DORILAR (Medicines)
+// ═══════════════════════════════════════════
+model Medicine {
+  id             String   @id @default(cuid())
+  barcode        String   @unique           // EAN-13 shtrix kod
+  name           String                     // Dori nomi
+  nameRu         String?   @map("name_ru")  // Ruscha nomi
+  nameEn         String?   @map("name_en")  // Inglizcha nomi
+  description    String?                    // Tavsifi
+  imageUrl       String?   @map("image_url")// Rasm URL
+  price          Float?                     // Narxi (so'm)
+  priceCurrency  String    @default("UZS")  // Valyuta
+  manufacturer   String?                    // Ishlab chiqaruvchi
+  country        String?                    // Mamlakat
+  dosageForm     String?   @map("dosage_form")  // Dozalik shakli (tabletkasi, siropi...)
+  activeSubstance String?  @map("active_substance") // Faol modda
+  dosage         String?                    // Dozasi (500mg, 100ml...)
+  prescription   Boolean   @default(false)  // Retsept bilan
+  category       String?                    // Kategoriya
+  
+  // Ma'lumot manbai
+  sourceUrl      String?   @map("source_url") // gopharm.uz URL
+  scrapedAt      DateTime? @map("scraped_at")
+  
+  // GTIN lar ro'yxati
+  gtins          MedicineGtin[]
+  
+  // Ombor
+  inventory      InventoryItem?
+  
+  // Skanerlash seanslari
+  scanSessions   ScanSession[]
+  
+  // Vaqt
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt      @map("updated_at")
+
+  @@index([barcode])
+  @@index([name])
+  @@index([manufacturer])
+  @@map("medicines")
+}
+
+// ═══════════════════════════════════════════
+// GTIN KODLARI (DataMatrix)
+// ═══════════════════════════════════════════
+model MedicineGtin {
+  id           String    @id @default(cuid())
+  medicineId   String    @map("medicine_id")
+  medicine     Medicine  @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  
+  gtin         String    // GS1 GTIN (14 raqam)
+  serial       String?   // Seriya raqami
+  expiry       DateTime? // Yaroqlilik muddati
+  batch        String?   // Partiya raqami
+  
+  // Skanerlash ma'lumotlari
+  scannedAt    DateTime  @default(now()) @map("scanned_at")
+  scannedBy    String?   @map("scanned_by") // Kim skaner qildi
+  location     String?   // Joylashuv (ombor, vitrina...)
+  
+  // Status
+  status       GtinStatus @default(ACTIVE)
+  
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt      @map("updated_at")
+
+  @@index([gtin])
+  @@index([medicineId])
+  @@index([serial])
+  @@index([expiry])
+  @@unique([gtin, serial])
+  @@map("medicine_gtins")
+}
+
+enum GtinStatus {
+  ACTIVE
+  EXPIRED
+  SOLD
+  DAMAGED
+}
+
+// ═══════════════════════════════════════════
+// NOMA'LUM GTIN LAR (bazada yo'q kodlar)
+// ═══════════════════════════════════════════
+model UnknownGtin {
+  id         String   @id @default(cuid())
+  gtin       String   @unique
+  rawData    String?  @map("raw_data")  // To'liq DataMatrix ma'lumoti
+  serial     String?
+  expiry     DateTime?
+  batch      String?
+  scannedAt  DateTime @default(now()) @map("scanned_at")
+  resolved   Boolean  @default(false)
+  
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([gtin])
+  @@map("unknown_gtins")
+}
+
+// ═══════════════════════════════════════════
+// SKANER SEANSLARI (Batch scan logs)
+// ═══════════════════════════════════════════
+model ScanSession {
+  id          String   @id @default(cuid())
+  medicineId  String?  @map("medicine_id")
+  medicine    Medicine? @relation(fields: [medicineId], references: [id])
+  
+  totalScanned Int     @default(0)
+  matched      Int     @default(0)
+  unmatched    Int     @default(0)
+  
+  startedAt   DateTime @default(now()) @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  
+  scans       ScanLog[]
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("scan_sessions")
+}
+
+// ═══════════════════════════════════════════
+// SKANER LOGI (Har bir scan uchun)
+// ═══════════════════════════════════════════
+model ScanLog {
+  id          String   @id @default(cuid())
+  sessionId   String   @map("session_id")
+  session     ScanSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  barcode     String
+  scanType    ScanType
+  matched     Boolean  @default(false)
+  medicineId  String?  @map("medicine_id")
+  
+  scannedAt   DateTime @default(now()) @map("scanned_at")
+
+  @@index([sessionId])
+  @@index([barcode])
+  @@map("scan_logs")
+}
+
+enum ScanType {
+  EAN13
+  DATAMATRIX
+  QR_CODE
+  UNKNOWN
+}
+
+// ═══════════════════════════════════════════
+// OMBOR — Dori zaxirasi (Inventory)
+// ═══════════════════════════════════════════
+model InventoryItem {
+  id           String   @id @default(cuid())
+  medicineId   String   @unique @map("medicine_id")
+  medicine     Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  
+  quantity     Int      @default(0)         // Hozirgi miqdori
+  minQuantity  Int      @default(5)  @map("min_quantity")  // Kam ogohlantirish
+  maxQuantity  Int?     @map("max_quantity") // Maksimum sig'im
+  
+  buyPrice     Float?   @map("buy_price")   // Sotib olish narxi
+  sellPrice    Float?   @map("sell_price")  // Sotish narxi
+  
+  location     String?                     // Joylashuv (vitrina, ombor, muzlatgich)
+  shelf        String?                     // Taxta raqami
+  
+  lastRestockAt DateTime? @map("last_restock_at")  // Oxirgi to'ldirish
+  lastSoldAt    DateTime? @map("last_sold_at")      // Oxirgi sotish
+  
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt      @map("updated_at")
+
+  transactions InventoryTransaction[]
+  
+  @@index([medicineId])
+  @@map("inventory_items")
+}
+
+// ═══════════════════════════════════════════
+// OMBOR TRANSAKSIYALARI (Kirish/Chiqish)
+// ═══════════════════════════════════════════
+model InventoryTransaction {
+  id           String   @id @default(cuid())
+  itemId       String   @map("item_id")
+  item         InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  
+  type         TransactionType              // KIRISH / CHIQISH / TUZATISH
+  quantity     Int                          // Miqdor (+ yoki -)
+  reason       String?                      // Sabab
+  
+  // Kim bajargan
+  performedBy  String?  @map("performed_by")
+  
+  // Narx (sotishda)
+  unitPrice    Float?   @map("unit_price")
+  totalPrice   Float?   @map("total_price")
+  
+  // Izoh
+  note         String?
+  
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([itemId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("inventory_transactions")
+}
+
+enum TransactionType {
+  IN       // Kirish — yangi tovar keldi
+  OUT      // Chiqish — sotildi
+  ADJUST   // Tuzatish — inventarizatsiya
+  EXPIRED  // Muddati o'tdi — yo'q qilindi
+  DAMAGED  // Shikastlandi
+  RETURN   // Qaytarildi
+}

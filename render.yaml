@@ -1,0 +1,41 @@
+# Render.com Blueprint — Dorixona Skaner
+# https://render.com/docs/blueprint-spec
+
+services:
+  # ═══════════════════════════════════════
+  # Next.js Web Service
+  # ═══════════════════════════════════════
+  - type: web
+    name: dorixona-scanner
+    runtime: node
+    region: frankfurt
+    plan: free
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npx prisma db push && npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dorixona-db
+          property: connectionString
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+      - key: NEXTAUTH_URL
+        sync: false
+      # ═══ KIRISH PAROLI ═══
+      # Buni o'zgartiring! Xavfsiz parol yozing.
+      - key: APP_PASSWORD
+        sync: false
+      # ═══ TOKEN KALITI ═══
+      # Buni ham o'zgartiring!
+      - key: SESSION_SECRET
+        generateValue: true
+
+databases:
+  - name: dorixona-db
+    plan: free
+    region: frankfurt
+    databaseName: dorixona_scanner
+    postgresMajorVersion: "16"
